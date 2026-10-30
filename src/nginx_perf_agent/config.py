@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     # Attachment handling
     max_attachment_bytes: int = Field(default=256 * 1024 * 1024, ge=1)
 
+    # Log analysis: comma-separated path globs to leave out of endpoint stats
+    endpoint_exclusions: str = ""
+
+    @property
+    def excluded_patterns(self) -> tuple[str, ...]:
+        return tuple(
+            part.strip() for part in self.endpoint_exclusions.split(",") if part.strip()
+        )
+
     @property
     def attachments_dir(self) -> Path:
         return self.data_dir / "attachments"

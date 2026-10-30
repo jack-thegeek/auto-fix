@@ -69,6 +69,7 @@ def show_config() -> None:
     typer.echo(f"imap_mailbox   = {settings.imap_mailbox}")
     typer.echo(f"imap_subject   = {settings.imap_subject_filter}")
     typer.echo(f"imap_interval  = {settings.imap_poll_interval}s")
+    typer.echo(f"exclusions     = {', '.join(settings.excluded_patterns) or '(none)'}")
 
 
 @app.command("init-db")

@@ -4,7 +4,6 @@ from nginx_perf_agent.mail.attachments import (
     StoredFile,
     UnsafeAttachment,
     extract_attachments,
-    safe_member_name,
 )
 from nginx_perf_agent.mail.client import (
     ImapClient,
@@ -40,6 +39,5 @@ __all__ = [
     "decode_mime",
     "extract_attachments",
     "open_processor",
-    "safe_member_name",
     "subject_matches",
 ]

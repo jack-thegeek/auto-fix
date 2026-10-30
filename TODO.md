@@ -41,9 +41,9 @@
 - [x] 2.3 Implement subject matching for `Nginx 日志`.
 - [x] 2.4 Implement IMAP UID-based email identification.
 - [x] 2.5 Implement attachment extraction.
-- [x] 2.6 Support `.log` and `.txt` attachments.
-- [x] 2.7 Support `.gz` attachments.
-- [x] 2.8 Support `.zip` attachments.
+- [x] 2.6 Collect only `.gz` attachments; every other format is ignored.
+- [x] 2.7 Decompress `.gz` attachments to plain `.log` files.
+- [x] 2.8 Safe decompression (size limit, nesting depth, corrupt archives).
 - [x] 2.9 Implement attachment SHA256 deduplication.
 - [x] 2.10 Implement safe archive extraction.
 - [x] 2.11 Implement email processing status tracking.
@@ -64,16 +64,28 @@
 
 ### 3.1 Log Parsing
 
-- [ ] 3.1.1 Implement standard Nginx combined log parser.
-- [ ] 3.1.2 Support extended combined format.
-- [ ] 3.1.3 Extract HTTP method, URL, status and response size.
-- [ ] 3.1.4 Extract request time when available.
-- [ ] 3.1.5 Extract upstream response time when available.
-- [ ] 3.1.6 Normalize URL paths and remove query parameters.
-- [ ] 3.1.7 Group endpoints by HTTP method.
-- [ ] 3.1.8 Handle malformed log entries.
-- [ ] 3.1.9 Support large files through streaming.
-- [ ] 3.1.10 Support configurable endpoint exclusions.
+- [x] 3.1.1 Implement standard Nginx combined log parser.
+- [x] 3.1.2 Support extended combined format.
+- [x] 3.1.3 Extract HTTP method, URL, status and response size.
+- [x] 3.1.4 Extract request time when available.
+- [x] 3.1.5 Extract upstream response time when available.
+- [x] 3.1.6 Normalize URL paths and remove query parameters.
+- [x] 3.1.7 Group endpoints by HTTP method.
+- [x] 3.1.8 Handle malformed log entries.
+- [x] 3.1.9 Support large files through streaming.
+- [x] 3.1.10 Support configurable endpoint exclusions.
+
+**Observed production format** (12 real attachments, 182,887 lines, 0 malformed):
+
+```
+$remote_addr Forwarded for $http_x_forwarded_for $remote_ident $remote_user
+[$time_local] "$request" $status $body_bytes_sent $request_time
+"$http_referer" "$http_user_agent"
+```
+
+- `$http_x_forwarded_for` may hold several comma-separated addresses.
+- `$upstream_response_time` is **not** logged: upstream latency is always
+  unavailable for this source and must never be estimated.
 
 ### 3.2 Performance Statistics
 
@@ -265,4 +277,4 @@
 - [ ] Phase 5: AI Diagnosis
 - [ ] Phase 6: Historical Analysis and Deployment
 
-**Next action:** Phase 2 verified (read-only IMAP client, UID dedup, status tracking, retries, archive extraction with safety guards, `mail-test`/`process`/`watch`, 61 tests passing against a fake IMAP server). Start Phase 3 (Log Parsing and Analysis) only.
+**Next action:** Phase 3.1 verified (combined/extended-combined/site-variant parser, streaming, malformed-line counting, configurable exclusions; 182,887 real log lines parsed with 0 malformed). Phase 2 attachments are now `.gz`-only. Next: 3.2 Performance Statistics.

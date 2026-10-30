@@ -1,3 +1,5 @@
+import gzip
+
 import pytest
 from typer.testing import CliRunner
 
@@ -5,7 +7,7 @@ import nginx_perf_agent.cli as cli
 from fake_imap import FakeImap, install, make_email
 from nginx_perf_agent import __version__
 from nginx_perf_agent.cli import app
-from nginx_perf_agent.config import get_settings
+from nginx_perf_agent.config import Settings, get_settings
 
 runner = CliRunner()
 
@@ -94,7 +96,8 @@ def test_mail_test_reports_mailbox(monkeypatch, tmp_path):
 
 
 def test_mail_test_without_credentials_exits_cleanly(monkeypatch):
-    get_settings.cache_clear()
+    # Never read the developer's real .env: this test must stay offline.
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(_env_file=None))
     result = runner.invoke(app, ["mail-test"])
     assert result.exit_code == 1
     assert "mail test failed" in result.stderr
@@ -104,7 +107,10 @@ def test_mail_test_without_credentials_exits_cleanly(monkeypatch):
 def test_process_runs_one_pass(monkeypatch, tmp_path):
     install(monkeypatch)
     _mail_env(monkeypatch, tmp_path)
-    FakeImap.add(1, make_email(attachments=(("access.log", b"GET / 200\n"),)))
+    FakeImap.add(
+        1,
+        make_email(attachments=(("access.log.gz", gzip.compress(b"GET / 200\n")),)),
+    )
 
     result = runner.invoke(app, ["process"])
 
@@ -115,8 +121,12 @@ def test_process_runs_one_pass(monkeypatch, tmp_path):
 
 
 def test_process_requires_imap_configuration(monkeypatch, tmp_path):
-    monkeypatch.setenv("NPA_DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
-    get_settings.cache_clear()
+    # Never read the developer's real .env: this test must stay offline.
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: Settings(_env_file=None, database_url=f"sqlite:///{tmp_path / 'cli.db'}"),
+    )
     result = runner.invoke(app, ["process"])
     assert result.exit_code == 2
     assert "IMAP is not configured" in result.stderr

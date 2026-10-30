@@ -98,9 +98,9 @@ def test_second_pass_does_not_reprocess_the_same_email(setup):
 
 def test_duplicate_attachment_is_stored_once(setup):
     _, processor, session_factory = setup
-    payload = b"same access log\n"
-    FakeImap.add(1, make_email(attachments=(("access.log", payload),)))
-    FakeImap.add(2, make_email(subject="Nginx 日志 again", attachments=(("copy.log", payload),)))
+    payload = gzip.compress(b"same access log\n")
+    FakeImap.add(1, make_email(attachments=(("access.log.gz", payload),)))
+    FakeImap.add(2, make_email(subject="Nginx 日志 again", attachments=(("copy.log.gz", payload),)))
 
     result = processor.process_once()
 
@@ -111,7 +111,7 @@ def test_duplicate_attachment_is_stored_once(setup):
 
 def test_failed_email_is_retried_on_the_next_pass(setup):
     _, processor, session_factory = setup
-    FakeImap.add(1, make_email(attachments=(("access.log", b"data"),)))
+    FakeImap.add(1, make_email(attachments=(("access.log.gz", gzip.compress(b"data")),)))
     FakeImap.fail_next("fetch", IMAP_ABORT("connection dropped"))
 
     first = processor.process_once()
@@ -131,8 +131,8 @@ def test_failed_email_is_retried_on_the_next_pass(setup):
 
 def test_a_broken_email_does_not_stop_the_pass(setup):
     _, processor, session_factory = setup
-    FakeImap.add(1, make_email(attachments=(("access.log", b"one"),)))
-    FakeImap.add(2, make_email(attachments=(("access.log", b"two"),)))
+    FakeImap.add(1, make_email(attachments=(("access.log.gz", gzip.compress(b"one")),)))
+    FakeImap.add(2, make_email(attachments=(("access.log.gz", gzip.compress(b"two")),)))
     FakeImap.fail_next("fetch", IMAP_ABORT("boom"))
 
     result = processor.process_once()
