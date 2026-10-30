@@ -1,0 +1,32 @@
+[project]
+name = "nginx-perf-agent"
+version = "0.1.0"
+description = "Nginx performance analyzer: IMAP log collection, log analysis, Django source discovery and AI diagnosis"
+readme = "README.md"
+authors = [
+    { name = "jackson", email = "jacksonhe@vectorbuilder.net" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
+    "sqlalchemy>=2.1.6",
+    "structlog>=26.1.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+nginx-perf-agent = "nginx_perf_agent.cli:run"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
