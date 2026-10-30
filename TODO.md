@@ -36,22 +36,22 @@
 
 ## 2. Email Monitoring (IMAP)
 
-- [ ] 2.1 Implement IMAP connection with SSL support.
-- [ ] 2.2 Implement mailbox configuration.
-- [ ] 2.3 Implement subject matching for `Nginx 日志`.
-- [ ] 2.4 Implement IMAP UID-based email identification.
-- [ ] 2.5 Implement attachment extraction.
-- [ ] 2.6 Support `.log` and `.txt` attachments.
-- [ ] 2.7 Support `.gz` attachments.
-- [ ] 2.8 Support `.zip` attachments.
-- [ ] 2.9 Implement attachment SHA256 deduplication.
-- [ ] 2.10 Implement safe archive extraction.
-- [ ] 2.11 Implement email processing status tracking.
-- [ ] 2.12 Implement retry and reconnect mechanisms.
-- [ ] 2.13 Implement configurable polling interval.
-- [ ] 2.14 Implement `mail-test` CLI command.
-- [ ] 2.15 Implement `watch` and `process` CLI commands.
-- [ ] 2.16 Add email integration tests using mocked IMAP responses.
+- [x] 2.1 Implement IMAP connection with SSL support.
+- [x] 2.2 Implement mailbox configuration.
+- [x] 2.3 Implement subject matching for `Nginx 日志`.
+- [x] 2.4 Implement IMAP UID-based email identification.
+- [x] 2.5 Implement attachment extraction.
+- [x] 2.6 Support `.log` and `.txt` attachments.
+- [x] 2.7 Support `.gz` attachments.
+- [x] 2.8 Support `.zip` attachments.
+- [x] 2.9 Implement attachment SHA256 deduplication.
+- [x] 2.10 Implement safe archive extraction.
+- [x] 2.11 Implement email processing status tracking.
+- [x] 2.12 Implement retry and reconnect mechanisms.
+- [x] 2.13 Implement configurable polling interval.
+- [x] 2.14 Implement `mail-test` CLI command.
+- [x] 2.15 Implement `watch` and `process` CLI commands.
+- [x] 2.16 Add email integration tests using mocked IMAP responses.
 
 **Acceptance criteria:**
 - Matching emails are detected automatically.
@@ -259,10 +259,10 @@
 ## Current Status
 
 - [x] Phase 1: Project Foundation
-- [ ] Phase 2: Email Monitoring
+- [x] Phase 2: Email Monitoring
 - [ ] Phase 3: Log Parsing and Analysis
 - [ ] Phase 4: Source Code Analysis
 - [ ] Phase 5: AI Diagnosis
 - [ ] Phase 6: Historical Analysis and Deployment
 
-**Next action:** Phase 1 verified (CLI, config, SQLite, 15 tests passing). Start Phase 2 (Email Monitoring) only. Do not implement subsequent phases until the current phase passes its acceptance criteria.
+**Next action:** Phase 2 verified (read-only IMAP client, UID dedup, status tracking, retries, archive extraction with safety guards, `mail-test`/`process`/`watch`, 61 tests passing against a fake IMAP server). Start Phase 3 (Log Parsing and Analysis) only.

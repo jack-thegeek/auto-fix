@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -24,6 +24,26 @@ class Settings(BaseSettings):
     log_json: bool = False
     data_dir: Path = Path("data")
     database_url: str = Field(default="sqlite:///data/nginx_perf.db", min_length=1)
+
+    # IMAP mailbox (Phase 2). Credentials are optional so that non-mail
+    # commands keep working; mail commands validate them.
+    imap_host: str | None = None
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_ssl: bool = True
+    imap_user: str | None = None
+    imap_password: SecretStr | None = None
+    imap_mailbox: str = "INBOX"
+    imap_subject_filter: str = "Nginx 日志"
+    imap_poll_interval: int = Field(default=300, ge=5)
+    imap_max_retries: int = Field(default=3, ge=1, le=10)
+    imap_retry_delay: float = Field(default=2.0, ge=0)
+
+    # Attachment handling
+    max_attachment_bytes: int = Field(default=256 * 1024 * 1024, ge=1)
+
+    @property
+    def attachments_dir(self) -> Path:
+        return self.data_dir / "attachments"
 
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)

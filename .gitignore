@@ -23,3 +23,6 @@ reports/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# IDE
+.idea/

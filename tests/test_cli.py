@@ -1,6 +1,8 @@
 import pytest
 from typer.testing import CliRunner
 
+import nginx_perf_agent.cli as cli
+from fake_imap import FakeImap, install, make_email
 from nginx_perf_agent import __version__
 from nginx_perf_agent.cli import app
 from nginx_perf_agent.config import get_settings
@@ -56,3 +58,80 @@ def test_invalid_config_exits_with_clean_error(monkeypatch):
     assert result.exit_code == 2
     assert "invalid configuration" in result.stderr
     assert "Traceback" not in result.output
+
+
+def _mail_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("NPA_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("NPA_IMAP_USER", "monitor@example.com")
+    monkeypatch.setenv("NPA_IMAP_PASSWORD", "s3cret")
+    monkeypatch.setenv("NPA_IMAP_RETRY_DELAY", "0")
+    monkeypatch.setenv("NPA_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("NPA_DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
+    get_settings.cache_clear()
+
+
+def test_config_masks_imap_password(monkeypatch, tmp_path):
+    _mail_env(monkeypatch, tmp_path)
+    result = runner.invoke(app, ["config"])
+    assert result.exit_code == 0
+    assert "imap_password  = ***" in result.stdout
+    assert "s3cret" not in result.stdout
+
+
+def test_mail_test_reports_mailbox(monkeypatch, tmp_path):
+    install(monkeypatch)
+    _mail_env(monkeypatch, tmp_path)
+    FakeImap.add(1, make_email(subject="Nginx 日志"))
+    FakeImap.add(2, make_email(subject="unrelated"))
+
+    result = runner.invoke(app, ["mail-test"])
+
+    assert result.exit_code == 0, result.output
+    assert "mailbox   = INBOX" in result.stdout
+    assert "messages  = 2" in result.stdout
+    assert "matching  = 1" in result.stdout
+    assert "s3cret" not in result.output
+
+
+def test_mail_test_without_credentials_exits_cleanly(monkeypatch):
+    get_settings.cache_clear()
+    result = runner.invoke(app, ["mail-test"])
+    assert result.exit_code == 1
+    assert "mail test failed" in result.stderr
+    assert "Traceback" not in result.output
+
+
+def test_process_runs_one_pass(monkeypatch, tmp_path):
+    install(monkeypatch)
+    _mail_env(monkeypatch, tmp_path)
+    FakeImap.add(1, make_email(attachments=(("access.log", b"GET / 200\n"),)))
+
+    result = runner.invoke(app, ["process"])
+
+    assert result.exit_code == 0, result.output
+    assert "scanned=1 matched=1 processed=1" in result.stdout
+    assert (tmp_path / "cli.db").exists()
+    assert list((tmp_path / "data" / "attachments").rglob("*.log"))
+
+
+def test_process_requires_imap_configuration(monkeypatch, tmp_path):
+    monkeypatch.setenv("NPA_DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
+    get_settings.cache_clear()
+    result = runner.invoke(app, ["process"])
+    assert result.exit_code == 2
+    assert "IMAP is not configured" in result.stderr
+
+
+def test_watch_polls_until_interrupted(monkeypatch, tmp_path):
+    install(monkeypatch)
+    _mail_env(monkeypatch, tmp_path)
+    FakeImap.add(1, make_email())
+    monkeypatch.setattr(cli.time, "sleep", lambda _seconds: (_ for _ in ()).throw(
+        KeyboardInterrupt
+    ))
+
+    result = runner.invoke(app, ["watch"])
+
+    assert result.exit_code == 0, result.output
+    assert "processed=1" in result.stdout
+    assert "stopped" in result.stdout
