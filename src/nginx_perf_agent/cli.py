@@ -2,12 +2,15 @@
 
 import time
 from datetime import datetime
+from pathlib import Path
+from typing import Annotated
 
 import typer
 from pydantic import ValidationError
 from sqlalchemy.engine import make_url
 
 from nginx_perf_agent import __version__
+from nginx_perf_agent.analysis import analyze_paths, render_markdown
 from nginx_perf_agent.config import Settings, get_settings
 from nginx_perf_agent.db import init_db, table_names
 from nginx_perf_agent.log import configure_logging, get_logger
@@ -70,6 +73,50 @@ def show_config() -> None:
     typer.echo(f"imap_subject   = {settings.imap_subject_filter}")
     typer.echo(f"imap_interval  = {settings.imap_poll_interval}s")
     typer.echo(f"exclusions     = {', '.join(settings.excluded_patterns) or '(none)'}")
+    typer.echo(f"slow_threshold = {settings.slow_request_threshold}s")
+
+
+@app.command("analyze")
+def analyze(
+    paths: Annotated[
+        list[Path], typer.Argument(help="Log files or directories containing .log files")
+    ],
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Report path")
+    ] = None,
+    top: Annotated[
+        int, typer.Option("--top", min=1, help="Rows per ranking table")
+    ] = 10,
+    slow_threshold: Annotated[
+        float | None,
+        typer.Option("--slow-threshold", help="Override NPA_SLOW_REQUEST_THRESHOLD"),
+    ] = None,
+) -> None:
+    """Analyze local Nginx log files and write a Markdown report."""
+    settings = _settings()
+    threshold = slow_threshold or settings.slow_request_threshold
+    try:
+        result = analyze_paths(
+            paths, slow_threshold=threshold, exclude=settings.excluded_patterns
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"analysis failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if output is None:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        output = settings.data_dir / "reports" / f"nginx-perf-{stamp}.md"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(render_markdown(result, top=top), encoding="utf-8")
+
+    report = result.report
+    typer.echo(f"report    = {output}")
+    typer.echo(f"files     = {len(result.files)}")
+    typer.echo(f"requests  = {report.requests}")
+    typer.echo(f"slow      = {len(report.slow_requests)} (>= {threshold}s)")
+    typer.echo(f"endpoints = {len(report.endpoints)} slow of {report.total_endpoints}")
+    if not report.timing_available:
+        typer.echo("warning: logs carry no request timing; slow stats unavailable")
 
 
 @app.command("init-db")

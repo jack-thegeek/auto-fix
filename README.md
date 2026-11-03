@@ -4,8 +4,8 @@ Collects Nginx access logs from a mailbox (IMAP), analyzes performance,
 maps slow endpoints to Django source code, and produces AI-assisted
 diagnosis reports.
 
-> Status: Phase 2 (email monitoring) and 3.1 (log parsing) complete.
-> Statistics, reports, source discovery and AI diagnosis are not implemented yet.
+> Status: Phase 3 (log parsing, performance statistics, Markdown reports)
+> complete. Source discovery and AI diagnosis are not implemented yet.
 
 ## Requirements
 
@@ -46,6 +46,7 @@ cp .env.example .env
 | `NPA_IMAP_RETRY_DELAY` | `2` | Backoff base in seconds between retries |
 | `NPA_MAX_ATTACHMENT_BYTES` | `268435456` | Reject archives expanding beyond this |
 | `NPA_ENDPOINT_EXCLUSIONS` | – | Comma-separated path globs left out of endpoint stats, e.g. `/health,/static/*` |
+| `NPA_SLOW_REQUEST_THRESHOLD` | `5` | Seconds at or above which a request counts as slow |
 
 Invalid values fail fast at startup.
 
@@ -59,6 +60,7 @@ uv run nginx-perf-agent init-db    # create database and tables
 uv run nginx-perf-agent mail-test  # read-only IMAP connectivity check
 uv run nginx-perf-agent process    # one polling pass
 uv run nginx-perf-agent watch      # poll every NPA_IMAP_POLL_INTERVAL seconds
+uv run nginx-perf-agent analyze data/attachments   # Markdown report of local logs
 ```
 
 The installed entry point is also available directly:
@@ -93,7 +95,9 @@ src/nginx_perf_agent/
 ├── config.py          Pydantic settings
 ├── log.py             structlog setup
 ├── analysis/
-│   └── parser.py      streaming Nginx access-log parser
+│   ├── parser.py      streaming Nginx access-log parser
+│   ├── stats.py       slow-request and endpoint statistics
+│   └── report.py      Markdown report and local analysis driver
 ├── mail/
 │   ├── client.py      read-only IMAP client, retries
 │   ├── attachments.py archive expansion, safe storage
@@ -122,6 +126,62 @@ tests/                 pytest suite (fake IMAP server in `fake_imap.py`)
 
 The production format does not log `$upstream_response_time`, so
 `upstream_time` is `None` for every entry from this source.
+
+## Performance statistics
+
+`nginx_perf_agent.analysis.PerformanceStats` consumes parsed entries one at a
+time and produces a `PerformanceReport`:
+
+- Slow requests: `request_time >= NPA_SLOW_REQUEST_THRESHOLD` (default 5s).
+  Each record keeps timestamp, method, normalized path, original URL,
+  response time, status and upstream time when logged.
+- Endpoints are keyed by `"<METHOD> <path>"`; query strings never split an
+  endpoint. Numeric and UUID path segments collapse to `{id}`; any other
+  segment stays literal so endpoints are never merged on a guess.
+- Per slow endpoint: total requests, slow requests, slow ratio, maximum
+  response time, average slow response time, first/last slow timestamp,
+  status distribution and upstream times when present. Sorted by slow count,
+  then maximum response time.
+- Query summary: distinct (redacted) parameter combinations of slow requests
+  only, with counts and maximum response time.
+- Entries without `$request_time` are counted in `requests_missing_timing`
+  and can never be classified as slow; `timing_available` is `False` when the
+  layout carries no timing at all.
+
+```python
+from nginx_perf_agent.analysis import LogParser, PerformanceStats
+
+parser, stats = LogParser(), PerformanceStats()
+stats.add_many(parser.parse_file("access.log"))
+report = stats.report()
+```
+
+## Reports
+
+`analyze` reads local `.log` files (directories are expanded to their `.log`
+files) and writes a Markdown report, by default to
+`data/reports/nginx-perf-<timestamp>.md`:
+
+```bash
+uv run nginx-perf-agent analyze data/attachments --top 20
+uv run nginx-perf-agent analyze one.log two.log -o report.md
+uv run nginx-perf-agent analyze data/attachments --slow-threshold 3
+```
+
+Sections, in order:
+
+1. Log file metadata: path, size, lines, parsed, malformed, excluded.
+2. Overall statistics: requests, endpoints, timed/missing-timing counts, slow
+   requests, error count, and latency min/mean/p50/p90/p95/p99/max.
+3. Slow endpoint ranking, sorted by slow count then maximum response time.
+4. Error analysis: 4xx/5xx distribution and the endpoints producing them.
+5. Slow query parameters: one row per redacted parameter combination.
+
+Percentiles use the nearest-rank method over every observed `$request_time`,
+so they are exact rather than interpolated. When a log layout has no timing
+field the report says so explicitly and omits latency percentiles instead of
+guessing. Upstream times show `n/a` because this deployment does not log
+`$upstream_response_time`.
 
 ## Database
 

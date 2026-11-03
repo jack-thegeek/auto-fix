@@ -28,7 +28,7 @@ def test_version():
 def test_help_lists_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for command in ("version", "config", "init-db"):
+    for command in ("version", "config", "init-db", "analyze"):
         assert command in result.stdout
 
 

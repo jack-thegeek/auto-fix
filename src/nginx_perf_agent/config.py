@@ -43,6 +43,8 @@ class Settings(BaseSettings):
 
     # Log analysis: comma-separated path globs to leave out of endpoint stats
     endpoint_exclusions: str = ""
+    # Requests at or above this many seconds count as slow
+    slow_request_threshold: float = Field(default=5.0, gt=0)
 
     @property
     def excluded_patterns(self) -> tuple[str, ...]:

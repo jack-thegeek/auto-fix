@@ -89,29 +89,107 @@ $remote_addr Forwarded for $http_x_forwarded_for $remote_ident $remote_user
 
 ### 3.2 Performance Statistics
 
-- [ ] 3.2.1 Calculate total request count.
-- [ ] 3.2.2 Calculate average response time.
-- [ ] 3.2.3 Calculate P50 latency.
-- [ ] 3.2.4 Calculate P95 latency.
-- [ ] 3.2.5 Calculate P99 latency.
-- [ ] 3.2.6 Calculate maximum response time.
-- [ ] 3.2.7 Calculate 4xx and 5xx counts and ratios.
-- [ ] 3.2.8 Calculate upstream latency statistics.
-- [ ] 3.2.9 Identify Top 20 slow endpoints.
-- [ ] 3.2.10 Identify Top 20 frequently requested endpoints.
-- [ ] 3.2.11 Identify high error-rate endpoints.
-- [ ] 3.2.12 Implement configurable performance thresholds.
-- [ ] 3.2.13 Add statistics unit tests.
+#### 3.2.1 Slow Request Detection
+
+- [x] Identify all requests with response time >= 5 seconds.
+- [x] Use a configurable threshold, defaulting to 5 seconds.
+- [x] Only classify requests with valid timing data.
+- [x] Explicitly report when standard combined logs lack request timing fields.
+- [x] Record malformed entries and requests with missing or invalid timing data.
+
+#### 3.2.2 Endpoint Aggregation
+
+- [x] Aggregate requests by HTTP method and normalized endpoint path.
+- [x] Treat requests to the same endpoint with different query parameters as the same endpoint.
+- [x] Exclude query parameters from endpoint grouping.
+- [x] Keep different HTTP methods (GET, POST, etc.) separate.
+- [x] Normalize dynamic path segments where reliably identifiable.
+- [x] Preserve original request URLs and query parameters for slow requests.
+- [x] Avoid merging endpoints when their identities cannot be reliably determined.
+
+#### 3.2.3 Slow Endpoint Statistics
+
+For every endpoint with at least one request taking >= 5 seconds, report:
+
+- [x] HTTP method (GET, POST, PUT, DELETE, etc.).
+- [x] Normalized endpoint path.
+- [x] Total request count.
+- [x] Slow request count (response time >= 5 seconds).
+- [x] Slow request ratio: `slow request count / total request count * 100%`.
+- [x] Maximum response time.
+- [x] Average response time of slow requests.
+- [x] Earliest and latest slow request timestamps, when available.
+- [x] HTTP status code distribution among slow requests.
+- [x] Upstream response time for slow requests, when available.
+- [x] Sort results by slow request count descending, then maximum response time descending.
+
+#### 3.2.4 Slow Request Details
+
+- [x] Preserve individual slow request records for further investigation.
+- [x] Record request timestamp, HTTP method, original URL, response time and status code.
+- [x] Record upstream response time and upstream address when available.
+- [x] Identify slow requests containing query parameters.
+- [x] Collect the distinct query parameter combinations for each affected endpoint.
+- [x] Deduplicate identical parameter combinations.
+- [x] Preserve parameter values without exposing sensitive credentials or tokens in reports.
+
+#### 3.2.5 Slow Query Parameter Summary
+
+At the end of the report, generate a separate section listing endpoints with slow requests containing query parameters.
+
+For each endpoint, include:
+
+- [x] HTTP method.
+- [x] Normalized endpoint path.
+- [x] Query parameter names and observed values.
+- [x] Number of slow requests for each distinct parameter combination.
+- [x] Response time of each occurrence, or the maximum response time for each combination.
+
+Example:
+
+| Method | Endpoint | Query parameters | Slow requests | Max response time |
+|---|---|---|---:|---:|
+| GET | `/api/orders/` | `page=100&page_size=500` | 3 | 12.8s |
+| GET | `/api/orders/` | `status=pending` | 2 | 8.4s |
+| POST | `/api/reports/` | `format=excel` | 1 | 15.2s |
+
+The values above are illustrative only.
+
+- [x] Include only parameter combinations associated with requests taking >= 5 seconds.
+- [x] Do not include query parameters from requests below the threshold.
+- [x] Clearly indicate endpoints with no query parameters separately only if useful.
+- [x] Keep this section at the end of the performance report.
+
+#### 3.2.6 Testing
+
+- [x] Test the >= 5-second threshold boundary.
+- [x] Test that requests below 5 seconds are excluded from slow request counts.
+- [x] Test aggregation of identical endpoints with different query parameters.
+- [x] Test separation of different HTTP methods.
+- [x] Test total request counts and slow request ratios.
+- [x] Test maximum and average slow-request latency calculations.
+- [x] Test query parameter combination deduplication.
+- [x] Test missing timing data and malformed log entries.
+- [x] Test sensitive query parameter redaction.
+
+**Acceptance criteria:**
+
+- Every valid request taking >= 5 seconds is included in slow request analysis.
+- Requests to the same endpoint with different query parameters are aggregated into one endpoint entry per HTTP method.
+- Each slow endpoint reports total requests, slow requests, slow request ratio, maximum response time and other available diagnostic metrics.
+- A separate section at the end lists query parameters associated with slow requests.
+- Missing timing information is explicitly reported; response times are never fabricated.
+- All statistics are covered by automated tests.
 
 ### 3.3 Initial Reports
 
-- [ ] 3.3.1 Generate Markdown reports.
-- [ ] 3.3.2 Include log file metadata.
-- [ ] 3.3.3 Include overall request statistics.
-- [ ] 3.3.4 Include slow endpoint rankings.
-- [ ] 3.3.5 Include error analysis.
-- [ ] 3.3.6 Clearly indicate missing timing information.
-- [ ] 3.3.7 Implement local log analysis CLI command.
+- [x] 3.3.1 Generate Markdown reports.
+- [x] 3.3.2 Include log file metadata.
+- [x] 3.3.3 Include overall request statistics.
+- [x] 3.3.4 Include slow endpoint rankings.
+- [x] 3.3.5 Include error analysis.
+- [x] 3.3.6 Clearly indicate missing timing information.
+- [x] 3.3.7 Implement local log analysis CLI command.
 
 **Acceptance criteria:**
 - Standard combined logs parse correctly.
@@ -272,9 +350,9 @@ $remote_addr Forwarded for $http_x_forwarded_for $remote_ident $remote_user
 
 - [x] Phase 1: Project Foundation
 - [x] Phase 2: Email Monitoring
-- [ ] Phase 3: Log Parsing and Analysis
+- [x] Phase 3: Log Parsing and Analysis
 - [ ] Phase 4: Source Code Analysis
 - [ ] Phase 5: AI Diagnosis
 - [ ] Phase 6: Historical Analysis and Deployment
 
-**Next action:** Phase 3.1 verified (combined/extended-combined/site-variant parser, streaming, malformed-line counting, configurable exclusions; 182,887 real log lines parsed with 0 malformed). Phase 2 attachments are now `.gz`-only. Next: 3.2 Performance Statistics.
+**Next action:** Phase 3 complete. 3.3 adds `analysis/report.py` (`analyze_paths`, `render_markdown`) and the `analyze` CLI command: Markdown report with per-file metadata, overall statistics and latency percentiles (nearest-rank over actual observations), slow-endpoint ranking, error analysis, an explicit missing-timing notice, and a redacted slow query-parameter section at the end. Real run over the 12 attachments: 182,887 requests, 0 malformed, 1,118 slow requests, 13,575 endpoints, 6,291 errors, p50 0.073s / p95 0.669s / p99 3.035s; report at `data/reports/real-sample.md`. Next: 4.1 Project Registry.

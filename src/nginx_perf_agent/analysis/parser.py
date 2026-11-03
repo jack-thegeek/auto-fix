@@ -50,6 +50,7 @@ class LogEntry:
     time_local: datetime
     method: str
     path: str
+    target: str
     protocol: str
     status: int
     body_bytes: int | None
@@ -122,6 +123,7 @@ def parse_line(line: str) -> LogEntry | None:
         time_local=time_local,
         method=request[0],
         path=normalize_path(request[1] if len(request) > 1 else "/"),
+        target=request[1] if len(request) > 1 else "/",
         protocol=request[2] if len(request) > 2 else "",
         status=int(fields["status"]),
         body_bytes=(

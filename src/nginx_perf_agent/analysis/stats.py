@@ -1,0 +1,307 @@
+"""Slow-request and per-endpoint statistics from parsed log entries.
+
+Response times are never estimated: an entry without `$request_time` only
+counts towards `requests_missing_timing` and cannot be classified as slow.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from array import array
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import datetime
+from urllib.parse import parse_qsl
+
+from nginx_perf_agent.analysis.parser import LogEntry
+
+DEFAULT_SLOW_THRESHOLD = 5.0
+REDACTED = "***"
+PERCENTILES = (50, 90, 95, 99)
+
+# Parameter name tokens whose values are credentials or session material.
+_SENSITIVE_HINTS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "key",
+    "auth",
+    "session",
+    "cookie",
+    "sign",
+    "credential",
+)
+
+_PARAM_TOKEN = re.compile(r"[^a-z0-9]+")
+
+_ID_SEGMENT = re.compile(
+    r"^(?:\d+"
+    r"|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+)
+
+
+def normalize_endpoint_path(path: str) -> str:
+    """Replace numeric and UUID path segments with `{id}`.
+
+    shortcut: only digits and UUIDs are normalized. Any other segment could
+    be a real name, so it stays literal rather than merging two endpoints.
+    """
+    return "/".join(
+        "{id}" if _ID_SEGMENT.match(segment) else segment for segment in path.split("/")
+    )
+
+
+def _is_sensitive(name: str) -> bool:
+    """Match whole name tokens so `keywords` is not treated as `key`."""
+    tokens = [token for token in _PARAM_TOKEN.split(name.lower()) if token]
+    return any(token.endswith(_SENSITIVE_HINTS) for token in tokens)
+
+
+def redact_query(query: str) -> str:
+    """Canonical `name=value` form with sensitive values masked.
+
+    Sorting by name only keeps repeated names in their original order, and
+    makes `a=1&b=2` and `b=2&a=1` one combination.
+    """
+    pairs = sorted(parse_qsl(query, keep_blank_values=True), key=lambda pair: pair[0])
+    return "&".join(
+        f"{name}={REDACTED if _is_sensitive(name) else value}" for name, value in pairs
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SlowRequest:
+    """One request at or above the threshold, kept for investigation."""
+
+    timestamp: datetime
+    method: str
+    path: str
+    url: str
+    response_time: float
+    status: int
+    upstream_time: float | None
+    query: str
+
+    @property
+    def has_query(self) -> bool:
+        return bool(self.query)
+
+
+@dataclass(slots=True)
+class EndpointStats:
+    """Aggregates for one method plus normalized path."""
+
+    method: str
+    path: str
+    total_requests: int = 0
+    slow_requests: int = 0
+    status_counts: Counter[int] = field(default_factory=Counter)
+    slow_times: list[float] = field(default_factory=list)
+    slow_statuses: Counter[int] = field(default_factory=Counter)
+    slow_upstream_times: list[float] = field(default_factory=list)
+    first_slow: datetime | None = None
+    last_slow: datetime | None = None
+
+    @property
+    def endpoint(self) -> str:
+        return f"{self.method} {self.path}"
+
+    @property
+    def slow_ratio(self) -> float:
+        """Slow requests as a percentage of every request to this endpoint."""
+        return self.slow_requests / self.total_requests * 100 if self.total_requests else 0.0
+
+    @property
+    def max_response_time(self) -> float:
+        return max(self.slow_times, default=0.0)
+
+    @property
+    def avg_slow_response_time(self) -> float | None:
+        return sum(self.slow_times) / len(self.slow_times) if self.slow_times else None
+
+    @property
+    def max_upstream_time(self) -> float | None:
+        return max(self.slow_upstream_times) if self.slow_upstream_times else None
+
+    @property
+    def error_requests(self) -> int:
+        """Requests answered with 4xx or 5xx."""
+        return sum(
+            count for status, count in self.status_counts.items() if status >= 400
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class QueryGroup:
+    """One distinct (redacted) parameter combination of a slow endpoint."""
+
+    method: str
+    path: str
+    query: str
+    slow_requests: int
+    max_response_time: float
+
+
+@dataclass(frozen=True, slots=True)
+class LatencySummary:
+    """Latency over every request that logged `$request_time`."""
+
+    count: int
+    minimum: float
+    maximum: float
+    mean: float
+    percentiles: dict[int, float]
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceReport:
+    slow_threshold: float
+    requests: int
+    requests_missing_timing: int
+    timed_requests: int
+    total_endpoints: int
+    status_counts: dict[int, int]
+    latency: LatencySummary | None
+    slow_requests: tuple[SlowRequest, ...]
+    endpoints: tuple[EndpointStats, ...]
+    error_endpoints: tuple[EndpointStats, ...]
+    query_groups: tuple[QueryGroup, ...]
+
+    @property
+    def timing_available(self) -> bool:
+        """False when the log layout carries no `$request_time` at all."""
+        return self.requests_missing_timing < self.requests
+
+    @property
+    def error_requests(self) -> int:
+        return sum(count for status, count in self.status_counts.items() if status >= 400)
+
+
+class PerformanceStats:
+    """Accumulates entries one at a time; slow requests are the only list kept."""
+
+    def __init__(
+        self, slow_threshold: float = DEFAULT_SLOW_THRESHOLD, normalize_paths: bool = True
+    ) -> None:
+        if slow_threshold <= 0:
+            raise ValueError("slow_threshold must be positive")
+        self.slow_threshold = slow_threshold
+        self._normalize = normalize_paths
+        self.requests = 0
+        self.requests_missing_timing = 0
+        self._endpoints: dict[tuple[str, str], EndpointStats] = {}
+        self._slow: list[SlowRequest] = []
+        self._queries: dict[tuple[str, str, str], list[float]] = {}
+        # Exact percentiles need every observation: 8 bytes per timed request.
+        self._times = array("d")
+        self._statuses: Counter[int] = Counter()
+
+    def add(self, entry: LogEntry) -> None:
+        path = normalize_endpoint_path(entry.path) if self._normalize else entry.path
+        stats = self._endpoints.get((entry.method, path))
+        if stats is None:
+            stats = self._endpoints[(entry.method, path)] = EndpointStats(entry.method, path)
+        self.requests += 1
+        self._statuses[entry.status] += 1
+        stats.total_requests += 1
+        stats.status_counts[entry.status] += 1
+
+        if entry.request_time is None:
+            self.requests_missing_timing += 1
+            return
+        self._times.append(entry.request_time)
+        if entry.request_time < self.slow_threshold:
+            return
+
+        query = redact_query(entry.target.split("?", 1)[1]) if "?" in entry.target else ""
+        self._slow.append(
+            SlowRequest(
+                timestamp=entry.time_local,
+                method=entry.method,
+                path=path,
+                url=entry.target,
+                response_time=entry.request_time,
+                status=entry.status,
+                upstream_time=entry.upstream_time,
+                query=query,
+            )
+        )
+        stats.slow_requests += 1
+        stats.slow_times.append(entry.request_time)
+        stats.slow_statuses[entry.status] += 1
+        if entry.upstream_time is not None:
+            stats.slow_upstream_times.append(entry.upstream_time)
+        if stats.first_slow is None or entry.time_local < stats.first_slow:
+            stats.first_slow = entry.time_local
+        if stats.last_slow is None or entry.time_local > stats.last_slow:
+            stats.last_slow = entry.time_local
+        if query:
+            self._queries.setdefault((entry.method, path, query), []).append(
+                entry.request_time
+            )
+
+    def add_many(self, entries: Iterable[LogEntry]) -> None:
+        for entry in entries:
+            self.add(entry)
+
+    def report(self) -> PerformanceReport:
+        endpoints = sorted(
+            (stats for stats in self._endpoints.values() if stats.slow_requests),
+            key=lambda stats: (stats.slow_requests, stats.max_response_time),
+            reverse=True,
+        )
+        groups = sorted(
+            (
+                QueryGroup(
+                    method=method,
+                    path=path,
+                    query=query,
+                    slow_requests=len(times),
+                    max_response_time=max(times),
+                )
+                for (method, path, query), times in self._queries.items()
+            ),
+            key=lambda group: (group.slow_requests, group.max_response_time),
+            reverse=True,
+        )
+        error_endpoints = sorted(
+            (stats for stats in self._endpoints.values() if stats.error_requests),
+            key=lambda stats: stats.error_requests,
+            reverse=True,
+        )
+        return PerformanceReport(
+            slow_threshold=self.slow_threshold,
+            requests=self.requests,
+            requests_missing_timing=self.requests_missing_timing,
+            timed_requests=len(self._times),
+            total_endpoints=len(self._endpoints),
+            status_counts=dict(self._statuses.most_common()),
+            latency=self._latency_summary(),
+            slow_requests=tuple(self._slow),
+            endpoints=tuple(endpoints),
+            error_endpoints=tuple(error_endpoints),
+            query_groups=tuple(groups),
+        )
+
+    def _latency_summary(self) -> LatencySummary | None:
+        """Percentiles over actual observations; `None` without timing data."""
+        if not self._times:
+            return None
+        ordered = sorted(self._times)
+        count = len(ordered)
+        return LatencySummary(
+            count=count,
+            minimum=ordered[0],
+            maximum=ordered[-1],
+            mean=sum(ordered) / count,
+            percentiles={
+                percentile: ordered[
+                    min(count - 1, max(0, math.ceil(percentile / 100 * count) - 1))
+                ]
+                for percentile in PERCENTILES
+            },
+        )
+
