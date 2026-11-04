@@ -28,7 +28,7 @@ def test_version():
 def test_help_lists_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for command in ("version", "config", "init-db", "analyze"):
+    for command in ("version", "config", "init-db", "analyze", "projects"):
         assert command in result.stdout
 
 
@@ -69,6 +69,8 @@ def _mail_env(monkeypatch, tmp_path):
     monkeypatch.setenv("NPA_IMAP_RETRY_DELAY", "0")
     monkeypatch.setenv("NPA_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("NPA_DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
+    # Keep mail tests independent of the developer's local registry.
+    monkeypatch.setenv("NPA_PROJECTS_FILE", str(tmp_path / "projects.yaml"))
     get_settings.cache_clear()
 
 
@@ -145,3 +147,71 @@ def test_watch_polls_until_interrupted(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert "processed=1" in result.stdout
     assert "stopped" in result.stdout
+
+
+def test_projects_lists_registry(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    registry = tmp_path / "projects.yaml"
+    registry.write_text(
+        f"projects:\n  - name: demo\n    path: {repo}\n"
+        "    url_prefixes: ['/demo/']\n"
+        "    subject_markers: [demo]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NPA_PROJECTS_FILE", str(registry))
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["projects"])
+
+    assert result.exit_code == 0, result.output
+    assert "projects  = 1 (1 enabled)" in result.stdout
+    assert "demo" in result.stdout
+    assert "prefixes=/demo/" in result.stdout
+    assert "markers=DEMO" in result.stdout
+
+
+def test_projects_reports_missing_checkout(monkeypatch, tmp_path):
+    registry = tmp_path / "projects.yaml"
+    registry.write_text(
+        f"projects:\n  - name: demo\n    path: {tmp_path / 'absent'}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NPA_PROJECTS_FILE", str(registry))
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["projects"])
+
+    assert result.exit_code == 1
+    assert "missing" in result.stdout
+    assert "missing enabled repositories: demo" in result.stderr
+
+
+def test_projects_rejects_invalid_registry(monkeypatch, tmp_path):
+    registry = tmp_path / "projects.yaml"
+    registry.write_text(
+        "projects:\n  - name: demo\n    path: /a\n"
+        "  - name: demo\n    path: /b\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NPA_PROJECTS_FILE", str(registry))
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["projects"])
+
+    assert result.exit_code == 1
+    assert "project registry invalid" in result.stderr
+
+
+def test_process_rejects_invalid_project_registry(monkeypatch, tmp_path):
+    install(monkeypatch)
+    _mail_env(monkeypatch, tmp_path)
+    (tmp_path / "projects.yaml").write_text(
+        "projects:\n  - name: demo\n    path: /a\n  - name: demo\n    path: /b\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["process"])
+
+    assert result.exit_code == 1
+    assert "project registry invalid" in result.stderr

@@ -4,8 +4,8 @@ Collects Nginx access logs from a mailbox (IMAP), analyzes performance,
 maps slow endpoints to Django source code, and produces AI-assisted
 diagnosis reports.
 
-> Status: Phase 3 (log parsing, performance statistics, Markdown reports)
-> complete. Source discovery and AI diagnosis are not implemented yet.
+> Status: Phase 4.1 (project registry) complete. Django source discovery
+> and AI diagnosis are not implemented yet.
 
 ## Requirements
 
@@ -33,6 +33,7 @@ cp .env.example .env
 | `NPA_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `NPA_LOG_JSON` | `false` | Emit one JSON object per log line |
 | `NPA_DATA_DIR` | `data` | Downloaded logs, extracted archives, reports |
+| `NPA_PROJECTS_FILE` | `projects.yaml` | YAML registry of source repositories |
 | `NPA_DATABASE_URL` | `sqlite:///data/nginx_perf.db` | SQLAlchemy database URL |
 | `NPA_IMAP_HOST` | – | IMAP server hostname |
 | `NPA_IMAP_PORT` | `993` | IMAP port |
@@ -61,6 +62,7 @@ uv run nginx-perf-agent mail-test  # read-only IMAP connectivity check
 uv run nginx-perf-agent process    # one polling pass
 uv run nginx-perf-agent watch      # poll every NPA_IMAP_POLL_INTERVAL seconds
 uv run nginx-perf-agent analyze data/attachments   # Markdown report of local logs
+uv run nginx-perf-agent projects   # validate and list registered repositories
 ```
 
 The installed entry point is also available directly:
@@ -77,6 +79,10 @@ never deleted, moved or marked as read.
 - Matching is a case-insensitive substring test on the decoded `Subject`.
 - Already-processed emails are skipped by `(mailbox, uid)`; failed ones are
   retried on the next pass.
+- The subject marker (`KR`/`EN`/`JP` or `CN`) is stored as `emails.project`;
+  no marker or two markers leave it empty and log a warning rather than
+  guessing. An invalid registry makes `process`/`watch` fail; a missing file
+  disables attribution.
 - Only `.gz` attachments are collected; every other format (`.log`, `.txt`,
   `.zip`, `.json`, images, …) is ignored.
 - Each `.gz` attachment is decompressed in memory and kept only when the
@@ -182,6 +188,37 @@ so they are exact rather than interpolated. When a log layout has no timing
 field the report says so explicitly and omits latency percentiles instead of
 guessing. Upstream times show `n/a` because this deployment does not log
 `$upstream_response_time`.
+
+## Projects
+
+`projects` validates the registry and prints every repository with its status.
+The registry is a YAML file (`NPA_PROJECTS_FILE`, default `projects.yaml`);
+copy `projects.example.yaml` and adjust the checkout paths:
+
+```yaml
+projects:
+  - name: vb-en
+    path: /home/jackson/workplace/vb-en
+    enabled: true
+    url_prefixes: ["/en/"]        # longest prefix wins
+    endpoints: ["GET /api/v1/orders/"]  # manual mapping, overrides prefixes
+    subject_markers: [KR, EN, JP]       # email subjects carrying these logs
+```
+
+- `name` is required and unique; `path` must exist for enabled projects.
+- `enabled: false` keeps an entry registered but out of matching.
+- `endpoints` entries are normalized endpoint paths, optionally prefixed with
+  an HTTP method; a bare path claims every method.
+- `url_prefixes` map by longest matching prefix after manual mappings.
+- `subject_markers` tie incoming emails to a project: the marker must appear
+  as a standalone token in the subject (`EN` matches `... EN Nginx 日志 ...`
+  but not `ENVIRONMENT`). Markers must be unique across projects, so `KR`,
+  `EN` and `JP` all map to `vb-en` while `CN` maps to `vb-cn`.
+- Unknown keys and duplicate names or endpoint mappings are rejected.
+- `projects` exits `1` when an enabled checkout is missing or the file is
+  invalid.
+
+The registry is not needed by `analyze`; phases 4.2+ use it to locate source.
 
 ## Database
 

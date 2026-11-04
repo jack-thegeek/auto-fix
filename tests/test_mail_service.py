@@ -18,9 +18,8 @@ def fake_imap(monkeypatch):
     return install(monkeypatch)
 
 
-@pytest.fixture
-def setup(tmp_path):
-    settings = Settings(
+def make_settings(tmp_path, **overrides):
+    values = dict(
         imap_host="imap.example.com",
         imap_user="monitor@example.com",
         imap_password="s3cret",
@@ -29,7 +28,15 @@ def setup(tmp_path):
         imap_retry_delay=0,
         data_dir=tmp_path / "data",
         database_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
+        projects_file=tmp_path / "projects.yaml",
     )
+    values.update(overrides)
+    return Settings(**values)
+
+
+@pytest.fixture
+def setup(tmp_path):
+    settings = make_settings(tmp_path)
     engine, processor = open_processor(settings)
     yield settings, processor, make_session_factory(engine)
     engine.dispose()
@@ -152,3 +159,39 @@ def test_mailbox_is_only_read(setup):
     conn = FakeImap.instances[-1]
     assert conn.selected == [("INBOX", True)]
     assert conn.closed
+
+
+def test_subject_markers_assign_the_project(tmp_path):
+    registry = tmp_path / "projects.yaml"
+    registry.write_text(
+        "projects:\n"
+        f"  - name: vb-en\n    path: {tmp_path / 'en'}\n"
+        "    subject_markers: [KR, EN, JP]\n"
+        f"  - name: vb-cn\n    path: {tmp_path / 'cn'}\n"
+        "    subject_markers: [CN]\n",
+        encoding="utf-8",
+    )
+    engine, processor = open_processor(make_settings(tmp_path))
+    try:
+        FakeImap.add(1, make_email(subject="Nginx 日志 KR 2026-10-10"))
+        FakeImap.add(2, make_email(subject="Nginx 日志 CN 2026-10-11"))
+        FakeImap.add(3, make_email(subject="Nginx 日志 without marker"))
+        FakeImap.add(4, make_email(subject="Nginx 日志 EN CN"))
+
+        processor.process_once()
+
+        session_factory = make_session_factory(engine)
+        with session_factory() as session:
+            assigned = {
+                email.uid: email.project
+                for email in session.query(EmailRecord).order_by(EmailRecord.uid)
+            }
+    finally:
+        engine.dispose()
+
+    assert assigned == {
+        "1": "vb-en",
+        "2": "vb-cn",
+        "3": None,
+        "4": None,  # ambiguous markers are never guessed
+    }

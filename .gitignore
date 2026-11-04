@@ -26,3 +26,6 @@ htmlcov/
 
 # IDE
 .idea/
+
+# Local project registry (machine-specific checkout paths)
+projects.yaml

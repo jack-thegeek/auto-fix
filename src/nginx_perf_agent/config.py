@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     log_json: bool = False
     data_dir: Path = Path("data")
     database_url: str = Field(default="sqlite:///data/nginx_perf.db", min_length=1)
+    # YAML file registering the source repositories (Phase 4)
+    projects_file: Path = Path("projects.yaml")
 
     # IMAP mailbox (Phase 2). Credentials are optional so that non-mail
     # commands keep working; mail commands validate them.

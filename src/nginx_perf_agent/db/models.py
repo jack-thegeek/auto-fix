@@ -26,6 +26,7 @@ class EmailRecord(Base):
     subject: Mapped[str] = mapped_column(String(512))
     sender: Mapped[str | None] = mapped_column(String(512))
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    project: Mapped[str | None] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(

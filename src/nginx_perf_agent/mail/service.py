@@ -18,6 +18,11 @@ from nginx_perf_agent.db import (
 from nginx_perf_agent.log import get_logger
 from nginx_perf_agent.mail.attachments import StoredFile, extract_attachments
 from nginx_perf_agent.mail.client import ImapClient, subject_matches
+from nginx_perf_agent.projects import (
+    ProjectConfigError,
+    ProjectRegistry,
+    load_optional_registry,
+)
 
 log = get_logger(__name__)
 
@@ -52,10 +57,12 @@ class MailProcessor:
         settings: Settings,
         session_factory: sessionmaker[Session],
         client: ImapClient | None = None,
+        registry: ProjectRegistry | None = None,
     ) -> None:
         self._settings = settings
         self._session_factory = session_factory
         self._client = client or ImapClient(settings)
+        self._registry = registry
 
     @property
     def client(self) -> ImapClient:
@@ -119,7 +126,8 @@ class MailProcessor:
         received_at: datetime | None,
     ) -> str:
         mailbox = self._settings.imap_mailbox
-        email_id = self._begin(mailbox, uid, subject, sender, received_at)
+        project = self._project_for(subject)
+        email_id = self._begin(mailbox, uid, subject, sender, received_at, project)
         if email_id is None:
             log.info("email_duplicate", mailbox=mailbox, uid=uid)
             return "duplicate"
@@ -138,8 +146,28 @@ class MailProcessor:
 
         self._attach(email_id, files)
         self._finish(email_id, STATUS_PROCESSED, None)
-        log.info("email_processed", mailbox=mailbox, uid=uid, attachments=len(files))
+        log.info(
+            "email_processed",
+            mailbox=mailbox,
+            uid=uid,
+            project=project,
+            attachments=len(files),
+        )
         return STATUS_PROCESSED
+
+    def _project_for(self, subject: str) -> str | None:
+        """Resolve the subject marker (KR/EN/JP -> vb-en, CN -> vb-cn)."""
+        if self._registry is None:
+            return None
+        matches = self._registry.projects_for_subject(subject)
+        if len(matches) > 1:
+            log.warning(
+                "email_project_ambiguous",
+                subject=subject,
+                projects=[project.name for project in matches],
+            )
+            return None
+        return matches[0].name if matches else None
 
     def _begin(
         self,
@@ -148,6 +176,7 @@ class MailProcessor:
         subject: str,
         sender: str | None,
         received_at: datetime | None,
+        project: str | None = None,
     ) -> int | None:
         """Create or retry an email record; `None` means already processed."""
         with self._session_factory() as session:
@@ -169,6 +198,7 @@ class MailProcessor:
             record.subject = subject
             record.sender = sender
             record.received_at = received_at
+            record.project = project
             record.status = STATUS_PROCESSING
             record.error = None
             session.commit()
@@ -204,4 +234,11 @@ class MailProcessor:
 def open_processor(settings: Settings) -> tuple[Engine, MailProcessor]:
     """Create the database engine and a processor bound to it."""
     engine = init_db(settings.database_url)
-    return engine, MailProcessor(settings, make_session_factory(engine))
+    try:
+        registry = load_optional_registry(settings.projects_file)
+    except ProjectConfigError:
+        engine.dispose()
+        raise
+    return engine, MailProcessor(
+        settings, make_session_factory(engine), registry=registry
+    )

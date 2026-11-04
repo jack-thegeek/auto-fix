@@ -7,14 +7,21 @@ from typing import Annotated
 
 import typer
 from pydantic import ValidationError
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import Engine, make_url
 
 from nginx_perf_agent import __version__
 from nginx_perf_agent.analysis import analyze_paths, render_markdown
 from nginx_perf_agent.config import Settings, get_settings
 from nginx_perf_agent.db import init_db, table_names
 from nginx_perf_agent.log import configure_logging, get_logger
-from nginx_perf_agent.mail import ImapClient, ImapConfigError, ImapError, open_processor
+from nginx_perf_agent.mail import (
+    ImapClient,
+    ImapConfigError,
+    ImapError,
+    MailProcessor,
+    open_processor,
+)
+from nginx_perf_agent.projects import ProjectConfigError, load_registry
 
 app = typer.Typer(
     help="Nginx performance analyzer: collect logs by email, analyze them, diagnose code.",
@@ -41,6 +48,15 @@ def _require_imap(settings: Settings) -> None:
             err=True,
         )
         raise typer.Exit(code=2)
+
+
+def _open_processor(settings: Settings) -> tuple[Engine, MailProcessor]:
+    """Open the processor, turning a broken project registry into a clear exit."""
+    try:
+        return open_processor(settings)
+    except ProjectConfigError as exc:
+        typer.echo(f"project registry invalid: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.callback()
@@ -74,6 +90,7 @@ def show_config() -> None:
     typer.echo(f"imap_interval  = {settings.imap_poll_interval}s")
     typer.echo(f"exclusions     = {', '.join(settings.excluded_patterns) or '(none)'}")
     typer.echo(f"slow_threshold = {settings.slow_request_threshold}s")
+    typer.echo(f"projects_file  = {settings.projects_file}")
 
 
 @app.command("analyze")
@@ -119,6 +136,48 @@ def analyze(
         typer.echo("warning: logs carry no request timing; slow stats unavailable")
 
 
+@app.command("projects")
+def list_projects(
+    config_file: Annotated[
+        Path | None,
+        typer.Option("--config", "-c", help="Registry YAML (default: NPA_PROJECTS_FILE)"),
+    ] = None,
+) -> None:
+    """Validate the project registry and list registered repositories."""
+    settings = _settings()
+    path = config_file or settings.projects_file
+    try:
+        registry = load_registry(path)
+    except ProjectConfigError as exc:
+        typer.echo(f"project registry invalid: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    enabled = registry.enabled_projects
+    typer.echo(f"registry  = {path}")
+    typer.echo(f"projects  = {len(registry.projects)} ({len(enabled)} enabled)")
+    for project in registry.projects:
+        if not project.enabled:
+            status = "disabled"
+        elif not project.path.is_dir():
+            status = "missing"
+        else:
+            status = "ok"
+        typer.echo(
+            f"{project.name:<14} {status:<8} {project.path}  "
+            f"prefixes={','.join(project.url_prefixes) or '-'} "
+            f"markers={','.join(project.subject_markers) or '-'} "
+            f"endpoints={len(project.endpoints)}"
+        )
+
+    missing = registry.missing_paths()
+    if missing:
+        typer.echo(
+            "missing enabled repositories: " + ", ".join(p.name for p in missing),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
 @app.command("init-db")
 def init_db_command() -> None:
     """Create the SQLite database and all tables."""
@@ -152,7 +211,7 @@ def process_emails() -> None:
     """Run one polling pass: download attachments of matching emails."""
     settings = _settings()
     _require_imap(settings)
-    engine, processor = open_processor(settings)
+    engine, processor = _open_processor(settings)
     try:
         result = processor.process_once()
     except (ImapError, OSError) as exc:
@@ -170,7 +229,7 @@ def watch() -> None:
     """Poll the mailbox continuously; stop with Ctrl-C."""
     settings = _settings()
     _require_imap(settings)
-    engine, processor = open_processor(settings)
+    engine, processor = _open_processor(settings)
     interval = settings.imap_poll_interval
     typer.echo(
         f"watching {settings.imap_mailbox} every {interval}s "

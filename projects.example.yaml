@@ -1,0 +1,31 @@
+# Source project registry. Copy to projects.yaml and adjust the paths.
+# `nginx-perf-agent projects` validates this file; NPA_PROJECTS_FILE
+# overrides its location.
+projects:
+  - name: vb-en
+    path: /home/jackson/workplace/vb-en
+    enabled: true
+    url_prefixes: []      # e.g. ["/en/"]; the longest match wins
+    endpoints: []         # e.g. ["GET /api/v1/orders/"], overrides prefixes
+    subject_markers: [KR, EN, JP]   # email subjects carrying these logs
+
+  - name: vb-cn
+    path: /home/jackson/workplace/vb-cn
+    enabled: true
+    subject_markers: [CN]
+
+  - name: manage
+    path: /home/jackson/workplace/manage-v2024
+    enabled: true
+
+  - name: vb-bio
+    path: /home/jackson/workplace/vb-bio
+    enabled: true
+
+  - name: vps
+    path: /home/jackson/workplace/vps
+    enabled: true
+
+  - name: public
+    path: /home/jackson/workplace/public
+    enabled: true

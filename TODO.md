@@ -202,14 +202,15 @@ The values above are illustrative only.
 
 ### 4.1 Project Registry
 
-- [ ] 4.1.1 Implement multi-project YAML configuration.
-- [ ] 4.1.2 Register multiple source code repositories.
-- [ ] 4.1.3 Support project enable/disable.
-- [ ] 4.1.4 Support project-specific URL prefixes.
-- [ ] 4.1.5 Support manual endpoint-to-project mappings.
-- [ ] 4.1.6 Implement project validation.
-- [ ] 4.1.7 Exclude `.git`, `.venv`, `node_modules` and generated files.
-- [ ] 4.1.8 Implement `projects` CLI command.
+- [x] 4.1.1 Implement multi-project YAML configuration.
+- [x] 4.1.2 Register multiple source code repositories.
+- [x] 4.1.3 Support project enable/disable.
+- [x] 4.1.4 Support project-specific URL prefixes.
+- [x] 4.1.5 Support manual endpoint-to-project mappings.
+- [x] 4.1.6 Implement project validation.
+- [x] 4.1.7 Exclude `.git`, `.venv`, `node_modules` and generated files.
+- [x] 4.1.8 Implement `projects` CLI command.
+- [x] 4.1.9 Map email subject markers to projects (KR/EN/JP -> vb-en, CN -> vb-cn).
 
 ### 4.2 Django Code Discovery
 
@@ -355,4 +356,4 @@ The values above are illustrative only.
 - [ ] Phase 5: AI Diagnosis
 - [ ] Phase 6: Historical Analysis and Deployment
 
-**Next action:** Phase 3 complete. 3.3 adds `analysis/report.py` (`analyze_paths`, `render_markdown`) and the `analyze` CLI command: Markdown report with per-file metadata, overall statistics and latency percentiles (nearest-rank over actual observations), slow-endpoint ranking, error analysis, an explicit missing-timing notice, and a redacted slow query-parameter section at the end. Real run over the 12 attachments: 182,887 requests, 0 malformed, 1,118 slow requests, 13,575 endpoints, 6,291 errors, p50 0.073s / p95 0.669s / p99 3.035s; report at `data/reports/real-sample.md`. Next: 4.1 Project Registry.
+**Next action:** Phase 4.1 complete. `projects.py` adds the YAML registry (`projects.yaml`, `NPA_PROJECTS_FILE`), Pydantic validation (unique names, prefixes, endpoint mappings, unknown keys), enable/disable, longest-prefix and manual endpoint resolution, missing-checkout reporting, and the `projects` CLI command. `projects.example.yaml` registers the six local repositories (vb-en, vb-cn, manage, vb-bio, vps, public); URL prefixes and manual mappings are intentionally empty until 4.2 discovers real routes. Subject markers attach each email to a project (KR/EN/JP -> vb-en, CN -> vb-cn) and are stored as `emails.project`; existing rows were backfilled locally (108 emails). URL and manual mappings remain empty until 4.2. 134 tests pass. Next: 4.2 Django Code Discovery.

@@ -1,9 +1,11 @@
 import pytest
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from nginx_perf_agent.db import (
     Attachment,
     EmailRecord,
+    create_engine_for,
     init_db,
     make_session_factory,
     table_names,
@@ -33,7 +35,9 @@ def test_init_db_is_idempotent(tmp_path):
 def test_email_with_attachment_roundtrip(engine):
     session_factory = make_session_factory(engine)
     with session_factory() as session:
-        email = EmailRecord(mailbox="INBOX", uid="42", subject="Nginx 日志")
+        email = EmailRecord(
+            mailbox="INBOX", uid="42", subject="Nginx 日志 CN", project="vb-cn"
+        )
         email.attachments.append(
             Attachment(
                 filename="access.log",
@@ -49,6 +53,7 @@ def test_email_with_attachment_roundtrip(engine):
         stored = session.query(EmailRecord).one()
         assert stored.uid == "42"
         assert stored.status == "pending"
+        assert stored.project == "vb-cn"
         assert stored.created_at is not None
         assert [a.filename for a in stored.attachments] == ["access.log"]
 
@@ -82,3 +87,19 @@ def test_duplicate_email_uid_rejected(engine):
         )
         with pytest.raises(IntegrityError):
             session.commit()
+
+
+def test_init_db_adds_project_column_to_existing_table(tmp_path):
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    engine = create_engine_for(url)
+    with engine.begin() as connection:
+        connection.execute(
+            text("CREATE TABLE emails (id INTEGER PRIMARY KEY, subject VARCHAR(512))")
+        )
+    engine.dispose()
+
+    engine = init_db(url)
+    columns = {column["name"] for column in inspect(engine).get_columns("emails")}
+    engine.dispose()
+
+    assert "project" in columns
