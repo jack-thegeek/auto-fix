@@ -172,7 +172,10 @@ class ImapClient:
         start = (since_uid or 0) + 1
 
         def action(conn: imaplib.IMAP4) -> list[str]:
-            typ, data = conn.uid("search", None, f"{start}:*")
+            # The explicit `UID` key matters: some servers (Aliyun) parse a
+            # bare range in `UID SEARCH` as sequence numbers, silently
+            # skipping every message whose UID exceeds the mailbox count.
+            typ, data = conn.uid("search", None, f"UID {start}:*")
             if typ != "OK":
                 raise ImapError(f"search failed: {data!r}")
             uids = [uid.decode() for uid in (data[0] or b"").split()]

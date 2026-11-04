@@ -101,6 +101,13 @@ def test_search_returns_uids_after_watermark(fake_imap):
     assert client.search_uids(2) == ["5"]
     # `n:*` echoes the highest UID even when it is below the watermark.
     assert client.search_uids(5) == []
+    # The explicit UID key stops servers that read bare ranges as sequence
+    # numbers (Aliyun) from skipping older UIDs.
+    assert fake_imap.instances[0].search_criteria == [
+        "UID 1:*",
+        "UID 3:*",
+        "UID 6:*",
+    ]
     client.close()
 
 

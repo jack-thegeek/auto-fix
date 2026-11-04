@@ -78,7 +78,7 @@ class FakeImap:
         if command == "search":
             criteria = str(args[-1])
             self.search_criteria.append(criteria)
-            start = int(criteria.split(":")[0])
+            start = int(criteria.removeprefix("UID ").split(":")[0])
             uids = sorted(int(uid) for uid in FakeImap.messages)
             selected = [uid for uid in uids if uid >= start]
             if not selected and uids:
