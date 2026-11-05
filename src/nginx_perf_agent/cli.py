@@ -10,9 +10,17 @@ from pydantic import ValidationError
 from sqlalchemy.engine import Engine, make_url
 
 from nginx_perf_agent import __version__
-from nginx_perf_agent.analysis import analyze_paths, render_markdown
+from nginx_perf_agent.analysis import (
+    UNCLASSIFIED,
+    analyze_paths,
+    group_files_by_language,
+    load_internal_networks,
+    render_markdown,
+    resolve_log_files,
+)
 from nginx_perf_agent.config import Settings, get_settings
-from nginx_perf_agent.db import init_db, table_names
+from nginx_perf_agent.db import attachment_languages, init_db, table_names
+from nginx_perf_agent.db.queries import LANGUAGES
 from nginx_perf_agent.log import configure_logging, get_logger
 from nginx_perf_agent.mail import (
     ImapClient,
@@ -90,6 +98,7 @@ def show_config() -> None:
     typer.echo(f"imap_interval  = {settings.imap_poll_interval}s")
     typer.echo(f"exclusions     = {', '.join(settings.excluded_patterns) or '(none)'}")
     typer.echo(f"slow_threshold = {settings.slow_request_threshold}s")
+    typer.echo(f"internal_cidrs = {settings.internal_cidrs_file}")
     typer.echo(f"projects_file  = {settings.projects_file}")
 
 
@@ -108,32 +117,78 @@ def analyze(
         float | None,
         typer.Option("--slow-threshold", help="Override NPA_SLOW_REQUEST_THRESHOLD"),
     ] = None,
+    hours: Annotated[
+        float,
+        typer.Option(
+            "--hours",
+            min=0,
+            help="Only analyse this many hours before the newest log line; 0 = all",
+        ),
+    ] = 24,
 ) -> None:
-    """Analyze local Nginx log files and write a Markdown report."""
+    """Analyze local Nginx log files and write one Markdown report per language."""
     settings = _settings()
     threshold = slow_threshold or settings.slow_request_threshold
+    networks = load_internal_networks(settings.internal_cidrs_file)
     try:
-        result = analyze_paths(
-            paths, slow_threshold=threshold, exclude=settings.excluded_patterns
-        )
-    except (FileNotFoundError, ValueError) as exc:
+        files = resolve_log_files(paths)
+    except FileNotFoundError as exc:
         typer.echo(f"analysis failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    if output is None:
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        output = settings.data_dir / "reports" / f"nginx-perf-{stamp}.md"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render_markdown(result, top=top), encoding="utf-8")
+    groups = group_files_by_language(
+        files, attachment_languages(settings.database_url)
+    )
+    # EN, KR, JP, CN first; files with no email attribution last.
+    labels = [label for label in LANGUAGES if label in groups]
+    labels += [label for label in groups if label not in LANGUAGES]
 
-    report = result.report
-    typer.echo(f"report    = {output}")
-    typer.echo(f"files     = {len(result.files)}")
-    typer.echo(f"requests  = {report.requests}")
-    typer.echo(f"slow      = {len(report.slow_requests)} (>= {threshold}s)")
-    typer.echo(f"endpoints = {len(report.endpoints)} slow of {report.total_endpoints}")
-    if not report.timing_available:
-        typer.echo("warning: logs carry no request timing; slow stats unavailable")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    default_dir = settings.data_dir / "reports"
+    for label in labels:
+        try:
+            result = analyze_paths(
+                groups[label],
+                slow_threshold=threshold,
+                exclude=settings.excluded_patterns,
+                internal_networks=networks,
+                hours=hours,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"analysis failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        target = _report_path(output, default_dir, stamp, label, len(labels) > 1)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            render_markdown(result, top=top, label=label), encoding="utf-8"
+        )
+
+        report = result.report
+        typer.echo(f"report    = {target}")
+        typer.echo(f"language  = {label}")
+        typer.echo(f"window    = {f'last {hours:g}h' if hours > 0 else 'all lines'}")
+        typer.echo(f"files     = {len(result.files)}")
+        typer.echo(f"requests  = {report.requests}")
+        typer.echo(f"slow      = {len(report.slow_requests)} (>= {threshold}s)")
+        typer.echo(
+            f"endpoints = {len(report.endpoints)} slow of {report.total_endpoints}"
+        )
+        typer.echo(f"networks  = {report.internal_networks} internal CIDR(s)")
+        if not report.timing_available:
+            typer.echo("warning: logs carry no request timing; slow stats unavailable")
+
+
+def _report_path(
+    output: Path | None, default_dir: Path, stamp: str, label: str, multiple: bool
+) -> Path:
+    """One file per language; an explicit `-o` is suffixed only when split."""
+    suffix = "other" if label == UNCLASSIFIED else label.lower()
+    if output is None:
+        return default_dir / f"nginx-perf-{stamp}-{suffix}.md"
+    if not multiple:
+        return output
+    return output.with_name(f"{output.stem}-{suffix}{output.suffix}")
 
 
 @app.command("projects")

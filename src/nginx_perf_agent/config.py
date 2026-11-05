@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     endpoint_exclusions: str = ""
     # Requests at or above this many seconds count as slow
     slow_request_threshold: float = Field(default=5.0, gt=0)
+    # One CIDR per line; requests from these networks count as internal calls
+    internal_cidrs_file: Path = Path("internal_cidrs.txt")
 
     @property
     def excluded_patterns(self) -> tuple[str, ...]:

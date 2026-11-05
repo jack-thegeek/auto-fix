@@ -48,6 +48,7 @@ cp .env.example .env
 | `NPA_MAX_ATTACHMENT_BYTES` | `268435456` | Reject archives expanding beyond this |
 | `NPA_ENDPOINT_EXCLUSIONS` | – | Comma-separated path globs left out of endpoint stats, e.g. `/health,/static/*` |
 | `NPA_SLOW_REQUEST_THRESHOLD` | `5` | Seconds at or above which a request counts as slow |
+| `NPA_INTERNAL_CIDRS_FILE` | `internal_cidrs.txt` | One CIDR per line; requests from these networks count as internal calls |
 
 Invalid values fail fast at startup.
 
@@ -110,6 +111,7 @@ src/nginx_perf_agent/
 │   └── service.py     polling pass, status tracking
 └── db/
     ├── models.py      SQLAlchemy models (emails, attachments, analysis_tasks)
+    ├── queries.py     attachment sha256 -> site marker (EN/KR/JP/CN)
     └── session.py     engine, init_db, session factory
 tests/                 pytest suite (fake IMAP server in `fake_imap.py`)
 ```
@@ -142,12 +144,19 @@ time and produces a `PerformanceReport`:
   Each record keeps timestamp, method, normalized path, original URL,
   response time, status and upstream time when logged.
 - Endpoints are keyed by `"<METHOD> <path>"`; query strings never split an
-  endpoint. Numeric and UUID path segments collapse to `{id}`; any other
-  segment stays literal so endpoints are never merged on a guess.
+  endpoint. Dynamic segments collapse to `{id}` (digits, UUID, hex, email),
+  `{code}` (`VB260101-1001abc`), `{accession}` (`NM_000546.6`, `ORF123`) and
+  `{vector}` (`pLV_2gRNA`); anything else stays literal so endpoints are
+  never merged on a guess.
 - Per slow endpoint: total requests, slow requests, slow ratio, maximum
   response time, average slow response time, first/last slow timestamp,
-  status distribution and upstream times when present. Sorted by slow count,
-  then maximum response time.
+  status distribution and upstream times when present.
+- Ranking mirrors the proxy-log report: priority tier (高/中/低; fewer than
+  3 requests or 2 slow requests is always 低, under 50 requests is 中),
+  then impact (average slow seconds × slow ratio), then slow count.
+- Internal call ratio: the first `X-Forwarded-For` address (or
+  `$remote_addr`) is tested against `NPA_INTERNAL_CIDRS_FILE`; the column
+  shows `-` when no file is present.
 - Query summary: distinct (redacted) parameter combinations of slow requests
   only, with counts and maximum response time.
 - Entries without `$request_time` are counted in `requests_missing_timing`
@@ -172,21 +181,34 @@ files) and writes a Markdown report, by default to
 uv run nginx-perf-agent analyze data/attachments --top 20
 uv run nginx-perf-agent analyze one.log two.log -o report.md
 uv run nginx-perf-agent analyze data/attachments --slow-threshold 3
+uv run nginx-perf-agent analyze data/attachments --hours 0   # every line
 ```
 
-Sections, in order:
+Only the last 24 hours are analysed by default. The window ends at the newest
+parsed timestamp rather than at wall-clock now, so old attachments still
+produce a report; `--hours 0` disables the window.
 
-1. Log file metadata: path, size, lines, parsed, malformed, excluded.
-2. Overall statistics: requests, endpoints, timed/missing-timing counts, slow
-   requests, error count, and latency min/mean/p50/p90/p95/p99/max.
-3. Slow endpoint ranking, sorted by slow count then maximum response time.
-4. Error analysis: 4xx/5xx distribution and the endpoints producing them.
-5. Slow query parameters: one row per redacted parameter combination.
+Reports are split per site: EN, KR, JP and CN are analysed and written
+separately, never merged. The site comes from the marker in the subject of the
+email that carried the attachment (`emails.subject`, looked up by the
+attachment's sha256 in the database); files with no email attribution go to a
+`未分类` report. Each language gets its own 24h window. Output names are
+`nginx-perf-<timestamp>-<en|kr|jp|cn|other>.md`; with `-o report.md` and more
+than one site the suffix is inserted (`report-en.md`, `report-cn.md`), while a
+single site writes exactly the given path.
 
-Percentiles use the nearest-rank method over every observed `$request_time`,
-so they are exact rather than interpolated. When a log layout has no timing
-field the report says so explicitly and omits latency percentiles instead of
-guessing. Upstream times show `n/a` because this deployment does not log
+The report is written in Chinese, headed `# 慢请求统计（EN）` (or KR/JP/CN),
+and opens with the slow-request table used by the proxy-log report:
+
+| 接口 | 优先级 | 慢请求/总请求 | 慢率 | 内部调用占比 | 慢请求平均时间 | 最慢用时 |
+
+The header lists generation time, log time span and the overall slow share
+(slow requests / total requests). Sections, in order:
+
+1. `## Top N 慢请求`: slow endpoint ranking (priority → impact → slow count).
+2. Slow query parameters: one row per redacted parameter combination.
+
+An upstream column appears only when a log actually records
 `$upstream_response_time`.
 
 ## Projects

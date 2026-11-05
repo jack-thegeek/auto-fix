@@ -5,8 +5,10 @@ import pytest
 from nginx_perf_agent.analysis import (
     LogParser,
     PerformanceStats,
+    load_internal_networks,
     normalize_endpoint_path,
     parse_line,
+    priority_for,
     redact_query,
 )
 
@@ -105,14 +107,60 @@ def test_status_distribution_and_timestamps():
     assert endpoint.last_slow.hour == 16
 
 
-def test_endpoints_sorted_by_slow_count_then_max_time():
+def test_endpoints_sorted_by_priority_then_impact():
     report = stats_for(
-        line("/one", "6.0"),
-        line("/two", "9.0"),
-        line("/two", "7.0"),
-        line("/three", "12.0"),
+        # busy: 60 requests, 3 slow -> 高, impact 6.0 * 5% = 0.30
+        *(line("/busy", "0.1") for _ in range(57)),
+        *(line("/busy", "6.0") for _ in range(3)),
+        # quiet: 4 requests, 2 slow -> 中, impact 20.0 * 50% = 10.0
+        line("/quiet", "0.1"),
+        line("/quiet", "0.1"),
+        line("/quiet", "20.0"),
+        line("/quiet", "20.0"),
+        # rare: 2 requests, 2 slow -> 低 (sample too small)
+        line("/rare", "30.0"),
+        line("/rare", "30.0"),
     )
-    assert [endpoint.path for endpoint in report.endpoints] == ["/two", "/three", "/one"]
+    assert [endpoint.path for endpoint in report.endpoints] == [
+        "/busy",
+        "/quiet",
+        "/rare",
+    ]
+    assert [endpoint.priority for endpoint in report.endpoints] == ["高", "中", "低"]
+
+
+def test_priority_demotes_small_samples():
+    assert priority_for(2, 2) == "低"
+    assert priority_for(3, 1) == "低"
+    assert priority_for(3, 3) == "中"
+    assert priority_for(50, 5) == "高"
+
+
+def test_internal_ratio_uses_the_forwarded_client(tmp_path):
+    cidr = tmp_path / "cidr.txt"
+    cidr.write_text("# office\n10.0.0.0/8\n", encoding="utf-8")
+    networks = load_internal_networks(cidr)
+    assert load_internal_networks(tmp_path / "missing.txt") == ()
+
+    internal = (
+        '43.1.2.3 Forwarded for 10.9.9.9 - - [10/Oct/2026:15:31:37 +0800] '
+        '"GET /a HTTP/1.1" 200 10 6.0 "-" "ua"\n'
+    )
+    direct = (
+        '10.1.2.3 - - [10/Oct/2026:15:31:37 +0800] '
+        '"GET /a HTTP/1.1" 200 10 0.2 "-" "ua"\n'
+    )
+    external = (
+        '43.1.2.3 - - [10/Oct/2026:15:31:37 +0800] '
+        '"GET /a HTTP/1.1" 200 10 0.2 "-" "ua"\n'
+    )
+    stats = PerformanceStats(internal_networks=networks)
+    stats.add_many(LogParser().parse_lines([internal, direct, external]))
+    report = stats.report()
+
+    assert report.internal_networks == 1
+    assert report.endpoints[0].internal_requests == 2
+    assert report.endpoints[0].internal_ratio == pytest.approx(66.67, abs=0.01)
 
 
 def test_query_combinations_are_deduplicated():
@@ -196,6 +244,11 @@ def test_malformed_lines_are_not_counted_by_stats():
     [
         ("/api/orders/123/", "/api/orders/{id}/"),
         ("/api/users/8f14e45f-ceea-467a-9c1e-0d3e0c1a2b3c/", "/api/users/{id}/"),
+        ("/api/users/user@example.com/", "/api/users/{id}/"),
+        ("/api/quote/VB260101-1001abc/", "/api/quote/{code}/"),
+        ("/api/bio/NM_000546.6/", "/api/bio/{accession}/"),
+        ("/api/bio/ORF123/", "/api/bio/{accession}/"),
+        ("/api/vector/pLV_2gRNA/config/", "/api/vector/{vector}/config/"),
         ("/about-us/careers.html", "/about-us/careers.html"),
         ("/", "/"),
     ],

@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Iterable
+import hashlib
+import re
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from nginx_perf_agent.analysis.parser import LogParser
+from nginx_perf_agent.analysis.parser import LogEntry, LogParser
 from nginx_perf_agent.analysis.stats import (
     DEFAULT_SLOW_THRESHOLD,
-    EndpointStats,
+    Network,
     PerformanceReport,
     PerformanceStats,
 )
 
 UNKNOWN = "n/a"
+DEFAULT_WINDOW_HOURS = 24.0
+UNCLASSIFIED = "未分类"
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,18 +57,76 @@ def resolve_log_files(paths: Iterable[str | Path]) -> list[Path]:
     return files
 
 
+def file_sha256(path: Path) -> str:
+    """Content hash; stored attachments are already named by their sha256."""
+    if _HEX64.fullmatch(path.stem):
+        return path.stem
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def group_files_by_language(
+    files: Iterable[Path], languages: Mapping[str, str]
+) -> dict[str, list[Path]]:
+    """Group log files by site marker; unmapped files go to 未分类."""
+    groups: dict[str, list[Path]] = {}
+    for path in files:
+        language = languages.get(file_sha256(path), UNCLASSIFIED)
+        groups.setdefault(language, []).append(path)
+    return groups
+
+
+def _newest_timestamp(files: Iterable[Path]) -> datetime | None:
+    """Newest `$time_local` across all files; `None` when nothing parses."""
+    newest: datetime | None = None
+    for path in files:
+        for entry in LogParser().parse_file(path):
+            if newest is None or entry.time_local > newest:
+                newest = entry.time_local
+    return newest
+
+
+def _within_window(
+    entries: Iterator[LogEntry], cutoff: datetime | None
+) -> Iterator[LogEntry]:
+    if cutoff is None:
+        yield from entries
+        return
+    for entry in entries:
+        if entry.time_local >= cutoff:
+            yield entry
+
+
 def analyze_paths(
     paths: Iterable[str | Path],
     *,
     slow_threshold: float = DEFAULT_SLOW_THRESHOLD,
     exclude: Iterable[str] = (),
+    internal_networks: Iterable[Network] = (),
+    hours: float = DEFAULT_WINDOW_HOURS,
 ) -> AnalysisResult:
-    """Parse every file once, streaming, and aggregate the statistics."""
-    stats = PerformanceStats(slow_threshold=slow_threshold)
+    """Aggregate statistics, keeping only the last `hours` of log time.
+
+    The window ends at the newest parsed timestamp, not at wall-clock now, so
+    old attachments still produce a report. `hours=0` analyses every line.
+    """
+    files = resolve_log_files(paths)
+    cutoff = None
+    if hours > 0:
+        newest = _newest_timestamp(files)
+        if newest is not None:
+            cutoff = newest - timedelta(hours=hours)
+
+    stats = PerformanceStats(
+        slow_threshold=slow_threshold, internal_networks=internal_networks
+    )
     metas: list[LogFileMeta] = []
-    for path in resolve_log_files(paths):
+    for path in files:
         parser = LogParser(exclude=exclude)
-        stats.add_many(parser.parse_file(path))
+        stats.add_many(_within_window(parser.parse_file(path), cutoff))
         metas.append(
             LogFileMeta(
                 name=str(path),
@@ -79,7 +141,7 @@ def analyze_paths(
 
 
 def _seconds(value: float | None) -> str:
-    return UNKNOWN if value is None else f"{value:.3f}s"
+    return UNKNOWN if value is None else f"{value:.2f}s"
 
 
 def _count(value: int) -> str:
@@ -87,7 +149,7 @@ def _count(value: int) -> str:
 
 
 def _percent(value: float) -> str:
-    return f"{value:.2f}%"
+    return f"{value:.1f}%"
 
 
 def _cell(value: object) -> str:
@@ -106,206 +168,85 @@ def _table(headers: list[str], rows: list[list[str]], align: str = "") -> list[s
     return lines
 
 
-def _files_section(files: tuple[LogFileMeta, ...]) -> list[str]:
-    rows = [
-        [
-            meta.name,
-            _count(meta.size_bytes),
-            _count(meta.lines),
-            _count(meta.parsed),
-            _count(meta.malformed),
-            _count(meta.excluded),
-        ]
-        for meta in files
-    ]
-    return [
-        "## Log files",
-        "",
-        *_table(
-            ["File", "Bytes", "Lines", "Parsed", "Malformed", "Excluded"], rows, "lrrrrr"
-        ),
-        "",
-    ]
+def _log_time(report: PerformanceReport) -> str:
+    first, last = report.first_timestamp, report.last_timestamp
+    if first is None or last is None:
+        return "-"
+    hours = (last - first).total_seconds() / 3600
+    return f"{first:%Y-%m-%d %H:%M:%S} ~ {last:%Y-%m-%d %H:%M:%S}（{hours:.2f} h）"
 
 
-def _overall_section(report: PerformanceReport) -> list[str]:
+def _header(report: PerformanceReport, stamp: str, label: str | None) -> list[str]:
     slow_ratio = (
         len(report.slow_requests) / report.requests * 100 if report.requests else 0.0
     )
-    rows = [
-        ["Requests", _count(report.requests)],
-        ["Endpoints", _count(report.total_endpoints)],
-        ["Requests with timing", _count(report.timed_requests)],
-        ["Requests without timing", _count(report.requests_missing_timing)],
-        [
-            "Slow requests",
-            f"{_count(len(report.slow_requests))} ({_percent(slow_ratio)})",
-        ],
-        ["Errors (4xx/5xx)", _count(report.error_requests)],
-    ]
-    lines = ["## Overall statistics", "", *_table(["Metric", "Value"], rows), ""]
-
-    latency = report.latency
-    if latency is None:
-        lines += [
-            f"> **Timing unavailable**: no request logged `$request_time` "
-            f"({_count(report.requests_missing_timing)} of {_count(report.requests)} "
-            "requests). Latency percentiles and slow-request statistics cannot be "
-            "produced, and response times are never estimated.",
-            "",
-        ]
-        return lines
-
-    if report.requests_missing_timing:
-        lines += [
-            f"> {_count(report.requests_missing_timing)} request(s) had no valid "
-            "`$request_time` and are excluded from latency and slow-request "
-            "statistics.",
-            "",
-        ]
-
-    percentiles = latency.percentiles
-    rows = [
-        ["Min", _seconds(latency.minimum)],
-        ["Mean", _seconds(latency.mean)],
-        *[
-            [f"p{percentile}", _seconds(percentiles[percentile])]
-            for percentile in percentiles
-        ],
-        ["Max", _seconds(latency.maximum)],
-    ]
-    lines += [
-        "### Latency (all timed requests)",
+    heading = f"# 慢请求统计（{label}）" if label else "# 慢请求统计"
+    return [
+        heading,
         "",
-        *_table(["Metric", "Response time"], rows),
+        f"- 生成时间：{stamp}",
+        f"- 日志时间：{_log_time(report)}",
+        f"- 慢请求/总请求占比：{_count(len(report.slow_requests))}/"
+        f"{_count(report.requests)}（{_percent(slow_ratio)}）",
         "",
     ]
-    return lines
 
 
-def _slow_endpoint_section(report: PerformanceReport, top: int) -> list[str]:
+def _slow_table(report: PerformanceReport, top: int) -> list[str]:
+    header = [f"## Top {top} 慢请求", ""]
     endpoints = report.endpoints
-    header = f"## Slow endpoints (>= {_seconds(report.slow_threshold)})"
     if not endpoints:
-        return [
-            header,
-            "",
-            f"No request took {_seconds(report.slow_threshold)} or longer.",
-            "",
-        ]
+        return header + [f"没有耗时 ≥ {_seconds(report.slow_threshold)} 的请求。", ""]
 
+    has_upstream = any(stats.max_upstream_time is not None for stats in endpoints)
+    headers = [
+        "接口",
+        "优先级",
+        "慢请求/总请求",
+        "慢率",
+        "内部调用占比",
+        "慢请求平均时间",
+        "最慢用时",
+    ]
+    if has_upstream:
+        headers.append("上游最慢")
     rows = [
         [
-            str(index),
-            stats.method,
-            stats.path,
-            _count(stats.total_requests),
-            _count(stats.slow_requests),
+            stats.endpoint,
+            stats.priority,
+            f"{stats.slow_requests}/{stats.total_requests}",
             _percent(stats.slow_ratio),
-            _seconds(stats.max_response_time),
+            _percent(stats.internal_ratio) if report.internal_networks else "-",
             _seconds(stats.avg_slow_response_time),
-            stats.first_slow.strftime("%Y-%m-%d %H:%M:%S") if stats.first_slow else UNKNOWN,
-            stats.last_slow.strftime("%Y-%m-%d %H:%M:%S") if stats.last_slow else UNKNOWN,
-            _seconds(stats.max_upstream_time),
+            _seconds(stats.max_response_time),
         ]
-        for index, stats in enumerate(endpoints[:top], start=1)
+        for stats in endpoints[:top]
     ]
+    if has_upstream:
+        for row, stats in zip(rows, endpoints[:top]):
+            row.append(_seconds(stats.max_upstream_time))
+
     lines = [
-        header,
-        "",
-        *_table(
-            [
-                "#",
-                "Method",
-                "Endpoint",
-                "Total",
-                "Slow",
-                "Slow %",
-                "Max",
-                "Avg slow",
-                "First slow",
-                "Last slow",
-                "Upstream max",
-            ],
-            rows,
-            "rlrrrrrrllr",
-        ),
+        *header,
+        *_table(headers, rows, "lc" + "r" * (len(headers) - 2)),
         "",
     ]
     if len(endpoints) > top:
-        lines += [f"Showing the top {top} of {len(endpoints)} slow endpoints.", ""]
-    if all(stats.max_upstream_time is None for stats in endpoints):
-        lines += [
-            "`n/a` upstream times mean the log layout does not record "
-            "`$upstream_response_time`.",
-            "",
-        ]
+        lines += [f"仅显示前 {top} 个，共 {len(endpoints)} 个慢接口。", ""]
     return lines
-
-
-def _error_section(report: PerformanceReport, top: int) -> list[str]:
-    errors = {
-        status: count for status, count in report.status_counts.items() if status >= 400
-    }
-    if not errors:
-        return ["## Error analysis", "", "No 4xx or 5xx responses.", ""]
-
-    total = sum(errors.values())
-    rows = [
-        [str(status), _count(count), _percent(count / total * 100)]
-        for status, count in sorted(errors.items())
-    ]
-    lines = [
-        "## Error analysis",
-        "",
-        f"{_count(total)} error response(s) out of {_count(report.requests)} requests.",
-        "",
-        *_table(["Status", "Count", "Share of errors"], rows, "lrr"),
-        "",
-    ]
-
-    # Only endpoints that actually produced errors; ranking is by error count.
-    endpoints = report.error_endpoints
-    if endpoints:
-        rows = [
-            [
-                stats.method,
-                stats.path,
-                _count(stats.error_requests),
-                _percent(stats.error_requests / stats.total_requests * 100),
-                str(_dominant_error(stats)),
-            ]
-            for stats in endpoints[:top]
-        ]
-        lines += [
-            "### Endpoints by errors",
-            "",
-            *_table(
-                ["Method", "Endpoint", "Errors", "Error %", "Top status"], rows, "lrrrl"
-            ),
-            "",
-        ]
-    return lines
-
-
-def _dominant_error(stats: EndpointStats) -> int:
-    errors: Counter[int] = Counter(
-        {status: count for status, count in stats.status_counts.items() if status >= 400}
-    )
-    return errors.most_common(1)[0][0]
 
 
 def _query_section(report: PerformanceReport, top: int) -> list[str]:
     groups = report.query_groups
     header = [
-        "## Slow query parameters",
+        "## 慢查询参数",
         "",
-        f"Only requests taking {_seconds(report.slow_threshold)} or longer are "
-        "listed; values of credential-like parameters are masked as `***`.",
+        f"仅统计耗时 ≥ {_seconds(report.slow_threshold)} 的请求；"
+        "疑似凭证类参数的值已脱敏为 `***`。",
         "",
     ]
     if not groups:
-        return header + ["No slow request carried query parameters.", ""]
+        return header + ["没有慢请求携带查询参数。", ""]
 
     rows = [
         [
@@ -318,32 +259,28 @@ def _query_section(report: PerformanceReport, top: int) -> list[str]:
         for group in groups[:top]
     ]
     lines = header + _table(
-        ["Method", "Endpoint", "Query parameters", "Slow requests", "Max response time"],
+        ["方法", "接口", "查询参数", "慢请求数", "最大耗时"],
         rows,
         "llrrr",
     ) + [""]
     if len(groups) > top:
-        lines += [f"Showing the top {top} of {len(groups)} combinations.", ""]
+        lines += [f"仅显示前 {top} 个，共 {len(groups)} 种参数组合。", ""]
     return lines
 
 
 def render_markdown(
-    result: AnalysisResult, *, top: int = 10, generated_at: datetime | None = None
+    result: AnalysisResult,
+    *,
+    top: int = 10,
+    generated_at: datetime | None = None,
+    label: str | None = None,
 ) -> str:
     """Render the report. The query-parameter section always comes last."""
     report = result.report
     stamp = (generated_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        "# Nginx performance report",
-        "",
-        f"Generated: {stamp}",
-        "",
-        f"Slow threshold: {_seconds(report.slow_threshold)}",
-        "",
-        *_files_section(result.files),
-        *_overall_section(report),
-        *_slow_endpoint_section(report, top),
-        *_error_section(report, top),
+        *_header(report, stamp, label),
+        *_slow_table(report, top),
         *_query_section(report, top),
     ]
     return "\n".join(lines).rstrip() + "\n"
