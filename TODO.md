@@ -41,8 +41,8 @@
 - [x] 2.3 Implement subject matching for `Nginx 日志`.
 - [x] 2.4 Implement IMAP UID-based email identification.
 - [x] 2.5 Implement attachment extraction.
-- [x] 2.6 Collect only `.gz` attachments; every other format is ignored.
-- [x] 2.7 Decompress `.gz` attachments to plain `.log` files.
+- [x] 2.6 Collect only `.gz` and `.tar` attachments; every other format is ignored.
+- [x] 2.7 Decompress `.gz` and unpack `.tar` attachments to plain `.log` files.
 - [x] 2.8 Safe decompression (size limit, nesting depth, corrupt archives).
 - [x] 2.9 Implement attachment SHA256 deduplication.
 - [x] 2.10 Implement safe archive extraction.

@@ -7,6 +7,7 @@ or marked as seen.
 from __future__ import annotations
 
 import imaplib
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -30,6 +31,17 @@ IMAP_ERROR = imaplib.IMAP4.error
 IMAP_ABORT = imaplib.IMAP4.abort
 
 T = TypeVar("T")
+
+# imaplib sends arguments verbatim, so a folder name with a space must be quoted.
+_MAILBOX_NEEDS_QUOTE = re.compile(r'[ (){}%*"\\]')
+
+
+def _mailbox_arg(name: str) -> str:
+    """Quote a mailbox name when it cannot be sent as a bare atom."""
+    if not _MAILBOX_NEEDS_QUOTE.search(name):
+        return name
+    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 class ImapError(RuntimeError):
@@ -120,7 +132,7 @@ class ImapClient:
         conn = factory(s.imap_host, s.imap_port, timeout=CONNECT_TIMEOUT)
         try:
             conn.login(s.imap_user, s.imap_password.get_secret_value())
-            typ, data = conn.select(s.imap_mailbox, readonly=True)
+            typ, data = conn.select(_mailbox_arg(s.imap_mailbox), readonly=True)
         except IMAP_ERROR as exc:
             conn.shutdown()
             raise ImapError(f"IMAP login or mailbox selection failed: {exc}") from exc
@@ -216,7 +228,7 @@ class ImapClient:
         """Mailbox counters for `mail-test`; never modifies the mailbox."""
 
         def action(conn: imaplib.IMAP4) -> int:
-            typ, data = conn.select(self.mailbox, readonly=True)
+            typ, data = conn.select(_mailbox_arg(self.mailbox), readonly=True)
             if typ != "OK":
                 raise ImapError(f"cannot open mailbox {self.mailbox!r}: {data!r}")
             return int(data[0] or 0)

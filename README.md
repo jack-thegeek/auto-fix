@@ -84,11 +84,13 @@ never deleted, moved or marked as read.
   no marker or two markers leave it empty and log a warning rather than
   guessing. An invalid registry makes `process`/`watch` fail; a missing file
   disables attribution.
-- Only `.gz` attachments are collected; every other format (`.log`, `.txt`,
-  `.zip`, `.json`, images, …) is ignored.
-- Each `.gz` attachment is decompressed in memory and kept only when the
-  inner name ends in `.log` or `.txt`. Payloads expanding above
-  `NPA_MAX_ATTACHMENT_BYTES`, nested too deeply or corrupt are rejected.
+- Only `.gz` and `.tar` attachments are collected (including `.tar.gz`);
+  every other format (`.log`, `.txt`, `.zip`, `.json`, images, …) is ignored.
+- Archives are unpacked in memory and kept only when the inner name ends in
+  `.log` or `.txt`. Tar members are stored by basename, so `..` or absolute
+  paths cannot escape the store; only regular files are read. Payloads
+  expanding above `NPA_MAX_ATTACHMENT_BYTES` (the budget is shared across the
+  members of one tar), nested too deeply or corrupt are rejected.
 - Stored files are content-addressed: `data/attachments/<sha256[:2]>/<sha256>.<ext>`.
   Identical files are stored and recorded once.
 

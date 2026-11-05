@@ -52,6 +52,22 @@ def attachments(session_factory) -> list[Attachment]:
         return session.query(Attachment).all()
 
 
+def test_limit_processes_only_the_newest_emails(setup):
+    _, processor, session_factory = setup
+    for uid in range(1, 4):
+        FakeImap.add(
+            uid,
+            make_email(
+                attachments=(("access.log.gz", gzip.compress(f"GET /{uid}\n".encode())),)
+            ),
+        )
+
+    result = processor.process_once(limit=2)
+
+    assert result.scanned == 2
+    assert [email.uid for email in emails(session_factory)] == ["2", "3"]
+
+
 def test_matching_email_is_processed_with_its_attachment(setup):
     _, processor, session_factory = setup
     FakeImap.add(

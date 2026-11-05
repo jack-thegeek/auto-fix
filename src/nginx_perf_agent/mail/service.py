@@ -68,12 +68,18 @@ class MailProcessor:
     def client(self) -> ImapClient:
         return self._client
 
-    def process_once(self) -> ProcessResult:
-        """Scan emails newer than the last recorded UID; process matches."""
+    def process_once(self, limit: int | None = None) -> ProcessResult:
+        """Scan emails newer than the last recorded UID; process matches.
+
+        `limit` keeps only the newest N emails of the pass.
+        """
         result = ProcessResult()
         since_uid = self._last_uid()
         with self._client as client:
-            for uid in client.search_uids(since_uid):
+            uids = client.search_uids(since_uid)
+            if limit:
+                uids = uids[-limit:]
+            for uid in uids:
                 result.scanned += 1
                 summary = client.fetch_summary(uid)
                 if not subject_matches(

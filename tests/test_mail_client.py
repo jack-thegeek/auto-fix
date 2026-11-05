@@ -49,6 +49,13 @@ def test_connects_with_ssl_and_opens_mailbox_read_only():
     assert conn.closed
 
 
+def test_mailbox_name_with_space_is_quoted():
+    client = ImapClient(settings(imap_mailbox="Log Monitor"))
+    client.connect()
+    assert FakeImap.instances[-1].selected == [('"Log Monitor"', True)]
+    client.close()
+
+
 def test_plain_connection_when_ssl_disabled(monkeypatch):
     class NoSsl:
         def __init__(self, *args: object, **kwargs: object) -> None:

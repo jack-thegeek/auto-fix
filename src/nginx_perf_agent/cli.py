@@ -262,13 +262,18 @@ def mail_test() -> None:
 
 
 @app.command("process")
-def process_emails() -> None:
+def process_emails(
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", min=1, help="Only the newest N emails of this pass"),
+    ] = None,
+) -> None:
     """Run one polling pass: download attachments of matching emails."""
     settings = _settings()
     _require_imap(settings)
     engine, processor = _open_processor(settings)
     try:
-        result = processor.process_once()
+        result = processor.process_once(limit=limit)
     except (ImapError, OSError) as exc:
         typer.echo(f"processing failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
