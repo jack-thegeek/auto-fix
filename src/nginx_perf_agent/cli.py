@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine, make_url
 
 from nginx_perf_agent import __version__
 from nginx_perf_agent.analysis import (
+    DEFAULT_WINDOW_HOURS,
     UNCLASSIFIED,
     analyze_paths,
     group_files_by_language,
@@ -24,10 +25,12 @@ from nginx_perf_agent.db.queries import LANGUAGES
 from nginx_perf_agent.log import configure_logging, get_logger
 from nginx_perf_agent.notify import send_text
 from nginx_perf_agent.mail import (
+    IDLE_LIMIT,
     ImapClient,
     ImapConfigError,
     ImapError,
     MailProcessor,
+    ProcessResult,
     open_processor,
 )
 from nginx_perf_agent.projects import ProjectConfigError, load_registry
@@ -136,14 +139,36 @@ def analyze(
 ) -> None:
     """Analyze local Nginx log files and write one Markdown report per language."""
     settings = _settings()
-    threshold = slow_threshold or settings.slow_request_threshold
-    networks = load_internal_networks(settings.internal_cidrs_file)
     try:
         files = resolve_log_files(paths)
-    except FileNotFoundError as exc:
+        failures = _analyze_files(
+            files,
+            settings,
+            output=output,
+            top=top,
+            threshold=slow_threshold or settings.slow_request_threshold,
+            hours=hours,
+            notify=notify,
+        )
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(f"analysis failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    if failures:
+        raise typer.Exit(code=1)
 
+
+def _analyze_files(
+    files: list[Path],
+    settings: Settings,
+    *,
+    output: Path | None,
+    top: int,
+    threshold: float,
+    hours: float,
+    notify: bool,
+) -> int:
+    """Write one report per site, optionally push. Returns delivery failures."""
+    networks = load_internal_networks(settings.internal_cidrs_file)
     groups = group_files_by_language(
         files, attachment_languages(settings.database_url)
     )
@@ -155,17 +180,13 @@ def analyze(
     default_dir = settings.data_dir / "reports"
     delivery_failures = 0
     for label in labels:
-        try:
-            result = analyze_paths(
-                groups[label],
-                slow_threshold=threshold,
-                exclude=settings.excluded_patterns,
-                internal_networks=networks,
-                hours=hours,
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            typer.echo(f"analysis failed: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
+        result = analyze_paths(
+            groups[label],
+            slow_threshold=threshold,
+            exclude=settings.excluded_patterns,
+            internal_networks=networks,
+            hours=hours,
+        )
 
         target = _report_path(output, default_dir, stamp, label, len(labels) > 1)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -195,9 +216,27 @@ def analyze(
                 typer.echo(
                     f"warning: weixin delivery failed: {delivery.detail}", err=True
                 )
+    return delivery_failures
 
-    if delivery_failures:
-        raise typer.Exit(code=1)
+
+def _report_new_mail(result: ProcessResult, settings: Settings) -> int:
+    """Regenerate reports only when this pass stored a new log file."""
+    if not result.stored:
+        return 0
+    typer.echo(f"new logs  = {len(result.stored)}; generating report")
+    try:
+        return _analyze_files(
+            list(result.stored),
+            settings,
+            output=None,
+            top=10,
+            threshold=settings.slow_request_threshold,
+            hours=DEFAULT_WINDOW_HOURS,
+            notify=True,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"report failed: {exc}", err=True)
+        return 1
 
 
 def _report_path(
@@ -310,6 +349,12 @@ def process_emails(
         int | None,
         typer.Option("--limit", min=1, help="Only the newest N emails of this pass"),
     ] = None,
+    notify: Annotated[
+        bool,
+        typer.Option(
+            "--notify", help="Report and push to Weixin when a new log arrives"
+        ),
+    ] = False,
 ) -> None:
     """Run one polling pass: download attachments of matching emails."""
     settings = _settings()
@@ -323,29 +368,67 @@ def process_emails(
     finally:
         engine.dispose()
     typer.echo(result.summary())
-    if result.failed:
+    failures = _report_new_mail(result, settings) if notify else 0
+    if result.failed or failures:
         raise typer.Exit(code=1)
 
 
 @app.command("watch")
-def watch() -> None:
+def watch(
+    notify: Annotated[
+        bool,
+        typer.Option(
+            "--notify", help="Report and push to Weixin when a new log arrives"
+        ),
+    ] = False,
+    idle: Annotated[
+        bool,
+        typer.Option(
+            "--idle", help="Wait for server push (IMAP IDLE) instead of only polling"
+        ),
+    ] = False,
+) -> None:
     """Poll the mailbox continuously; stop with Ctrl-C."""
     settings = _settings()
     _require_imap(settings)
     engine, processor = _open_processor(settings)
     interval = settings.imap_poll_interval
+    if idle:
+        try:
+            supported = processor.client.supports_idle()
+        except (ImapError, OSError) as exc:
+            processor.client.close()
+            engine.dispose()
+            typer.echo(f"IDLE check failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        if not supported:
+            processor.client.close()
+            engine.dispose()
+            typer.echo(
+                "server does not support IMAP IDLE; run watch without --idle",
+                err=True,
+            )
+            raise typer.Exit(code=2)
     typer.echo(
         f"watching {settings.imap_mailbox} every {interval}s "
-        f"for {settings.imap_subject_filter!r}; press Ctrl-C to stop"
+        f"for {settings.imap_subject_filter!r}"
+        f"{' (IDLE push)' if idle else ''}; press Ctrl-C to stop"
     )
     failures = 0
+    first = True
     try:
         while True:
             try:
+                if idle and not first:
+                    # Wake on server push; the interval is the fallback scan.
+                    processor.client.wait_for_new_mail(min(interval, IDLE_LIMIT))
+                first = False
                 result = processor.process_once()
                 failures = 0
                 stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 typer.echo(f"{stamp} {result.summary()}")
+                if notify:
+                    _report_new_mail(result, settings)
             except (ImapError, OSError) as exc:
                 failures += 1
                 typer.echo(f"poll failed (consecutive={failures}): {exc}", err=True)
@@ -353,6 +436,7 @@ def watch() -> None:
     except KeyboardInterrupt:
         typer.echo("stopped")
     finally:
+        processor.client.close()
         engine.dispose()
 
 

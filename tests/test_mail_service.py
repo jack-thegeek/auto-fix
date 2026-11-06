@@ -131,6 +131,19 @@ def test_duplicate_attachment_is_stored_once(setup):
     assert result.processed == 2
     assert len(emails(session_factory)) == 2
     assert [a.filename for a in attachments(session_factory)] == ["access.log"]
+    # Only the first email carried a new file; the copy must not trigger again.
+    assert len(result.stored) == 1
+    assert result.stored[0].exists()
+
+
+def test_stored_is_empty_without_a_new_log(setup):
+    _, processor, _session_factory = setup
+    FakeImap.add(1, make_email())
+
+    result = processor.process_once()
+
+    assert result.processed == 1
+    assert result.stored == []
 
 
 def test_failed_email_is_retried_on_the_next_pass(setup):

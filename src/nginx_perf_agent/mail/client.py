@@ -25,6 +25,8 @@ log = get_logger(__name__)
 
 CONNECT_TIMEOUT = 30.0
 STATUS_SAMPLE = 200
+# Servers drop an idle connection after ~30 minutes; re-issue before that.
+IDLE_LIMIT = 29 * 60
 
 # Captured at import time so tests can replace `imaplib.IMAP4` wholesale.
 IMAP_ERROR = imaplib.IMAP4.error
@@ -223,6 +225,34 @@ class ImapClient:
             return message_from_bytes(_extract_payload(data))
 
         return self._call(action, f"fetch message of uid {uid}")
+
+    # -- push notifications ---------------------------------------------
+
+    def supports_idle(self) -> bool:
+        """Whether the server advertises the IMAP IDLE extension."""
+
+        def action(conn: imaplib.IMAP4) -> bool:
+            return "IDLE" in conn.capabilities
+
+        return self._call(action, "check IDLE support")
+
+    def wait_for_new_mail(self, duration: float) -> bool:
+        """Block in IMAP IDLE until the server reports a new message.
+
+        Returns `False` when `duration` passes without a change, so callers
+        can fall back to a regular scan.
+        """
+
+        def action(conn: imaplib.IMAP4) -> bool:
+            if "IDLE" not in conn.capabilities:
+                raise ImapError("server does not support IMAP IDLE")
+            with conn.idle(duration=duration) as idler:
+                for typ, _data in idler:
+                    if typ == "EXISTS":
+                        return True
+            return False
+
+        return self._call(action, "idle")
 
     def status(self) -> MailboxStatus:
         """Mailbox counters for `mail-test`; never modifies the mailbox."""

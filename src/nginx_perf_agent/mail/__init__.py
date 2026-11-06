@@ -6,6 +6,7 @@ from nginx_perf_agent.mail.attachments import (
     extract_attachments,
 )
 from nginx_perf_agent.mail.client import (
+    IDLE_LIMIT,
     ImapClient,
     ImapConfigError,
     ImapError,
@@ -24,6 +25,7 @@ from nginx_perf_agent.mail.service import (
 )
 
 __all__ = [
+    "IDLE_LIMIT",
     "ImapClient",
     "ImapConfigError",
     "ImapError",

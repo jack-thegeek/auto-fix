@@ -24,22 +24,46 @@ def make_email(
     return message.as_bytes()
 
 
+class _FakeIdler:
+    """Stand-in for `imaplib.Idler`; yields the queued responses once."""
+
+    def __init__(self, responses: list[tuple[str, list[bytes]]]) -> None:
+        self._responses = responses
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def __iter__(self):
+        return iter(self._responses)
+
+
 class FakeImap:
     """Enough of the `imaplib.IMAP4` surface for the mail client."""
 
     instances: list["FakeImap"] = []
     messages: dict[str, bytes] = {}
     failures: dict[str, list[Exception]] = {}
+    idle_responses: list[tuple[str, list[bytes]]] = []
+    capabilities = ("IMAP4REV1", "IDLE")
 
     @classmethod
     def reset(cls) -> None:
         cls.instances = []
         cls.messages = {}
         cls.failures = {}
+        cls.idle_responses = []
 
     @classmethod
     def add(cls, uid: int, raw: bytes) -> None:
         cls.messages[str(uid)] = raw
+
+    @classmethod
+    def push(cls, typ: str = "EXISTS", data: bytes = b"1") -> None:
+        """Queue an untagged response for the next IDLE wait."""
+        cls.idle_responses.append((typ, [data]))
 
     @classmethod
     def fail_next(cls, operation: str, exc: Exception) -> None:
@@ -96,6 +120,11 @@ class FakeImap:
     def logout(self):
         self.closed = True
         return "BYE", [b"bye"]
+
+    def idle(self, duration: float | None = None):
+        responses = list(FakeImap.idle_responses)
+        FakeImap.idle_responses.clear()
+        return _FakeIdler(responses)
 
     def shutdown(self) -> None:
         self.closed = True

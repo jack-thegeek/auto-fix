@@ -8,6 +8,7 @@ from fake_imap import FakeImap, install, make_email
 from nginx_perf_agent import __version__
 from nginx_perf_agent.cli import app
 from nginx_perf_agent.config import Settings, get_settings
+from nginx_perf_agent.notify import Delivery
 
 runner = CliRunner()
 
@@ -217,3 +218,123 @@ def test_process_rejects_invalid_project_registry(monkeypatch, tmp_path):
 
     assert result.exit_code == 1
     assert "project registry invalid" in result.stderr
+
+
+def _notify_env(monkeypatch, tmp_path, sent):
+    _mail_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("NPA_INTERNAL_CIDRS_FILE", str(tmp_path / "no-cidrs.txt"))
+    monkeypatch.setattr(
+        cli,
+        "send_text",
+        lambda text, settings, target=None: (
+            sent.append(text) or Delivery("weixin", True, "chars")
+        ),
+    )
+    # One pass, then stop the loop.
+    monkeypatch.setattr(
+        cli.time, "sleep", lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt)
+    )
+
+
+def test_watch_notify_reports_only_when_a_log_arrives(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    FakeImap.add(
+        1, make_email(attachments=(("access.log.gz", gzip.compress(b"log")),))
+    )
+
+    result = runner.invoke(app, ["watch", "--notify"])
+
+    assert result.exit_code == 0, result.output
+    assert "new logs  = 1" in result.stdout
+    assert len(sent) == 1
+    assert sent[0].startswith("# 慢请求统计")
+
+
+def test_watch_notify_skips_email_without_a_log(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    FakeImap.add(1, make_email())
+
+    result = runner.invoke(app, ["watch", "--notify"])
+
+    assert result.exit_code == 0, result.output
+    assert sent == []
+    assert "new logs" not in result.stdout
+
+
+def test_watch_idle_scans_immediately_on_start(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    FakeImap.add(
+        1, make_email(attachments=(("access.log.gz", gzip.compress(b"log")),))
+    )
+
+    result = runner.invoke(app, ["watch", "--idle", "--notify"])
+
+    assert result.exit_code == 0, result.output
+    assert "(IDLE push)" in result.stdout
+    assert "processed=1" in result.stdout
+    assert len(sent) == 1
+
+
+def test_watch_idle_processes_pushed_mail(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    calls = {"n": 0}
+
+    def sleep(_seconds):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Mail arrives while the watcher sleeps after its first scan.
+            FakeImap.add(
+                1, make_email(attachments=(("access.log.gz", gzip.compress(b"log")),))
+            )
+            FakeImap.push("EXISTS", b"1")
+            return
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", sleep)
+
+    result = runner.invoke(app, ["watch", "--idle", "--notify"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["n"] == 2
+    assert "processed=1" in result.stdout
+    assert len(sent) == 1
+
+
+def test_watch_idle_falls_back_to_a_scan(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    calls = {"n": 0}
+
+    def sleep(_seconds):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", sleep)
+
+    result = runner.invoke(app, ["watch", "--idle"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["n"] == 2
+    assert "processed=0" in result.stdout
+
+
+def test_watch_idle_requires_server_support(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    monkeypatch.setattr(FakeImap, "capabilities", ("IMAP4REV1",))
+
+    result = runner.invoke(app, ["watch", "--idle"])
+
+    assert result.exit_code == 2
+    assert "does not support IMAP IDLE" in result.stderr

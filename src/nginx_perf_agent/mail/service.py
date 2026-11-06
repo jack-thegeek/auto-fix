@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import Engine, Integer, cast, func
 from sqlalchemy.orm import Session, sessionmaker
@@ -40,6 +41,8 @@ class ProcessResult:
     processed: int = 0
     duplicates: int = 0
     failed: int = 0
+    # Log files stored for the first time in this pass; drive report delivery.
+    stored: list[Path] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
@@ -88,10 +91,12 @@ class MailProcessor:
                     log.debug("email_skipped", uid=uid, subject=summary.subject)
                     continue
                 result.matched += 1
-                outcome = self._process(client, uid, summary.subject, summary.sender,
-                                        summary.received_at)
+                outcome, stored = self._process(
+                    client, uid, summary.subject, summary.sender, summary.received_at
+                )
                 if outcome == STATUS_PROCESSED:
                     result.processed += 1
+                    result.stored.extend(file.stored_path for file in stored)
                 elif outcome == STATUS_FAILED:
                     result.failed += 1
                 else:
@@ -130,13 +135,13 @@ class MailProcessor:
         subject: str,
         sender: str | None,
         received_at: datetime | None,
-    ) -> str:
+    ) -> tuple[str, list[StoredFile]]:
         mailbox = self._settings.imap_mailbox
         project = self._project_for(subject)
         email_id = self._begin(mailbox, uid, subject, sender, received_at, project)
         if email_id is None:
             log.info("email_duplicate", mailbox=mailbox, uid=uid)
-            return "duplicate"
+            return "duplicate", []
 
         try:
             message = client.fetch_message(uid)
@@ -148,9 +153,9 @@ class MailProcessor:
         except Exception as exc:  # one bad email must not stop the polling loop
             log.error("email_failed", mailbox=mailbox, uid=uid, error=str(exc))
             self._finish(email_id, STATUS_FAILED, str(exc))
-            return STATUS_FAILED
+            return STATUS_FAILED, []
 
-        self._attach(email_id, files)
+        added = self._attach(email_id, files)
         self._finish(email_id, STATUS_PROCESSED, None)
         log.info(
             "email_processed",
@@ -159,7 +164,7 @@ class MailProcessor:
             project=project,
             attachments=len(files),
         )
-        return STATUS_PROCESSED
+        return STATUS_PROCESSED, added
 
     def _project_for(self, subject: str) -> str | None:
         """Resolve the subject marker (KR/EN/JP -> vb-en, CN -> vb-cn)."""
@@ -210,7 +215,8 @@ class MailProcessor:
             session.commit()
             return record.id
 
-    def _attach(self, email_id: int, files: list[StoredFile]) -> None:
+    def _attach(self, email_id: int, files: list[StoredFile]) -> list[StoredFile]:
+        added: list[StoredFile] = []
         with self._session_factory() as session:
             for file in files:
                 if session.query(Attachment.id).filter_by(sha256=file.sha256).first():
@@ -225,7 +231,9 @@ class MailProcessor:
                         stored_path=str(file.stored_path),
                     )
                 )
+                added.append(file)
             session.commit()
+        return added
 
     def _finish(self, email_id: int, status: str, error: str | None) -> None:
         with self._session_factory() as session:

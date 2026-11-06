@@ -1,12 +1,13 @@
 # Nginx Performance Agent — TODO
 
-> Project: Nginx Performance Analyzer  
-> Stack: Ubuntu + Python 3.12+ + uv + SQLite + Polars + OpenAI API  
+> Project: Nginx Performance Analyzer
+>
+> Stack: Ubuntu + Python 3.14+ + uv + SQLite + Polars + OpenAI API
 > Rule: Complete tasks incrementally. Mark `[x]` immediately after successful implementation and verification.
 
 ## Progress
 
-- Total: 5 phases
+- Total: 6 phases
 - Rule: Never mark a task complete without verification.
 - Update this file after every implementation session.
 - Do not skip unfinished tasks or silently mark partially implemented features as complete.
@@ -52,6 +53,7 @@
 - [x] 2.14 Implement `mail-test` CLI command.
 - [x] 2.15 Implement `watch` and `process` CLI commands.
 - [x] 2.16 Add email integration tests using mocked IMAP responses.
+- [x] 2.17 Support IMAP IDLE push in `watch --idle`, with polling as fallback.
 
 **Acceptance criteria:**
 - Matching emails are detected automatically.
@@ -227,6 +229,8 @@ Weixin gateway. Delivery is outbound only; no interactive bot behaviour.
 - [x] 5.8 Add a `notify` CLI command that re-sends an existing report file, and a `--notify` flag on the report-producing command.
 - [x] 5.9 Add tests with a mocked `hermes` subprocess: success, non-zero exit, timeout, missing binary, long text passed whole.
 - [x] 5.10 Synchronize README and `.env.example` with the new settings and command.
+- [x] 5.11 Report and push automatically when a pass stores a new log attachment
+  (`process --notify`, `watch --notify`); duplicate-only passes stay silent.
 
 **Acceptance criteria:**
 - A generated report can be delivered to Weixin as one or more text messages.
@@ -234,6 +238,12 @@ Weixin gateway. Delivery is outbound only; no interactive bot behaviour.
 - No WeChat credentials are stored in this project; the gateway owns them.
 - Long reports are never silently truncated.
 - All delivery paths are covered by automated tests.
+
+## 6. Long-Running Deployment
+
+- [x] 6.1 Ship a systemd user unit in `deploy/nginx-perf-agent.service`.
+- [x] 6.2 Document install, enable, linger and journal commands in README.
+- [x] 6.3 Verify the unit starts `watch --idle --notify`, processes mail and pushes.
 
 ---
 
@@ -259,5 +269,6 @@ Weixin gateway. Delivery is outbound only; no interactive bot behaviour.
 - [x] Phase 3: Log Parsing and Analysis
 - [x] Phase 4: Project Registry
 - [x] Phase 5: Weixin Report Delivery
+- [x] Phase 6: Long-Running Deployment
 
-**Next action:** Phase 5 complete. `notify.py` sends report text through `hermes send --to <target> --file -` (stdin, no quoting), with `NPA_WEIXIN_TARGET` (default `weixin`), `NPA_HERMES_BIN` and `NPA_HERMES_TIMEOUT`. `analyze --notify` pushes every report after writing it; `notify <report>` re-sends one file. Long reports rely on the Weixin adapter's 2000-character chunking, so nothing is truncated locally. Failures (non-zero exit, timeout, missing binary) are logged and reported, never lose the report, and make the command exit `1`. Live delivery to the configured Weixin home channel verified. 162 tests pass. No further phases planned.
+**Next action:** all phases complete. `watch --idle --notify` waits on IMAP IDLE, scans immediately on start and every `NPA_IMAP_POLL_INTERVAL` (max 29 min) as fallback, regenerates reports only when a pass stored a new log file, and pushes them through Hermes. The systemd user unit in `deploy/` is installed, enabled and running; live delivery verified. 169 tests pass.

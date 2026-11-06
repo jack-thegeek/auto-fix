@@ -10,7 +10,7 @@ diagnosis reports.
 ## Requirements
 
 - Ubuntu (or any Linux)
-- Python 3.12+
+- Python 3.14+ (IMAP IDLE support in `imaplib`)
 - [uv](https://docs.astral.sh/uv/)
 
 ## Install
@@ -65,6 +65,9 @@ uv run nginx-perf-agent init-db    # create database and tables
 uv run nginx-perf-agent mail-test  # read-only IMAP connectivity check
 uv run nginx-perf-agent process    # one polling pass
 uv run nginx-perf-agent watch      # poll every NPA_IMAP_POLL_INTERVAL seconds
+uv run nginx-perf-agent watch --idle  # wait for server push, poll as fallback
+uv run nginx-perf-agent watch --notify  # poll, then report and push new logs
+uv run nginx-perf-agent watch --idle --notify  # real-time push + report
 uv run nginx-perf-agent analyze data/attachments   # Markdown report of local logs
 uv run nginx-perf-agent analyze data/attachments --notify  # also push to Weixin
 uv run nginx-perf-agent notify data/reports/nginx-perf-<stamp>-en.md  # re-send a report
@@ -98,6 +101,14 @@ never deleted, moved or marked as read.
   members of one tar), nested too deeply or corrupt are rejected.
 - Stored files are content-addressed: `data/attachments/<sha256[:2]>/<sha256>.<ext>`.
   Identical files are stored and recorded once.
+- `process --notify` and `watch --notify` close the loop: when a pass stored a
+  new log file, the reports are regenerated and pushed to Weixin. A pass with
+  no new attachment, or only duplicate content, pushes nothing.
+- `watch --idle` holds an IMAP IDLE connection instead of only polling: the
+  server pushes `EXISTS` as soon as mail arrives, so the pass starts within
+  seconds. The wait expires after `NPA_IMAP_POLL_INTERVAL` (capped at 29 min)
+  and a normal scan still runs as a fallback. The server must advertise
+  `IDLE`; otherwise `watch --idle` exits `2` and says to drop the flag.
 
 ## Project layout
 
@@ -122,6 +133,7 @@ src/nginx_perf_agent/
     ├── queries.py     attachment sha256 -> site marker (EN/KR/JP/CN)
     └── session.py     engine, init_db, session factory
 tests/                 pytest suite (fake IMAP server in `fake_imap.py`)
+deploy/                systemd user unit for `watch --idle --notify`
 ```
 
 ## Log parsing
@@ -249,6 +261,27 @@ projects:
   invalid.
 
 The registry is not needed by `analyze`; phases 4.2+ use it to locate source.
+
+## Run as a service
+
+`deploy/nginx-perf-agent.service` runs `watch --idle --notify` as a systemd
+user service, so it keeps running after logout and restarts on failure.
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/nginx-perf-agent.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now nginx-perf-agent
+loginctl enable-linger $USER   # start at boot without logging in
+```
+
+- The unit assumes the checkout is at `~/workplace/auto-fix`; adjust
+  `WorkingDirectory` and `ExecStart` if it lives elsewhere.
+- `PATH` includes `~/.local/bin` because `hermes` is installed there.
+- Logs go to the journal: `journalctl --user -u nginx-perf-agent -f`.
+- Stop it with `systemctl --user disable --now nginx-perf-agent`.
+- `Restart=always` with a 10 second delay; a broken `.env` shows up as a
+  restart loop in the journal.
 
 ## Weixin delivery
 
