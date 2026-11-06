@@ -9,6 +9,7 @@ def test_defaults():
     assert settings.log_level == "INFO"
     assert settings.log_json is False
     assert settings.database_url == "sqlite:///data/nginx_perf.db"
+    assert settings.imap_subject_filter == "Nginx 日志性能分析"
 
 
 def test_env_override(monkeypatch):

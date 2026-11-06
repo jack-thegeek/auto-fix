@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     imap_user: str | None = None
     imap_password: SecretStr | None = None
     imap_mailbox: str = "INBOX"
-    imap_subject_filter: str = "Nginx 日志"
+    imap_subject_filter: str = "Nginx 日志性能分析"
     imap_poll_interval: int = Field(default=300, ge=5)
     imap_max_retries: int = Field(default=3, ge=1, le=10)
     imap_retry_delay: float = Field(default=2.0, ge=0)
@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     slow_request_threshold: float = Field(default=5.0, gt=0)
     # One CIDR per line; requests from these networks count as internal calls
     internal_cidrs_file: Path = Path("internal_cidrs.txt")
+
+    # Weixin report delivery through the Hermes gateway (Phase 5)
+    weixin_target: str = Field(default="weixin", min_length=1)
+    hermes_bin: str = Field(default="hermes", min_length=1)
+    hermes_timeout: float = Field(default=60.0, gt=0)
 
     @property
     def excluded_patterns(self) -> tuple[str, ...]:

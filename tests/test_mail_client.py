@@ -30,6 +30,7 @@ def settings(**overrides) -> Settings:
         "imap_user": "monitor@example.com",
         "imap_password": "s3cret",
         "imap_mailbox": "INBOX",
+        "imap_subject_filter": "Nginx 日志",
         "imap_max_retries": 3,
         "imap_retry_delay": 0,
     }
@@ -93,6 +94,8 @@ def test_password_is_not_in_settings_repr():
         ("Weekly report", "Nginx 日志", False),
         ("", "Nginx 日志", False),
         ("anything", "  ", True),
+        ("JP Nginx 日志性能分析报告 2026-11-05", "Nginx 日志性能分析", True),
+        ("[告警][高] EN Nginx 日志安全分析报告", "Nginx 日志性能分析", False),
     ],
 )
 def test_subject_matching(subject, needle, expected):

@@ -22,6 +22,7 @@ from nginx_perf_agent.config import Settings, get_settings
 from nginx_perf_agent.db import attachment_languages, init_db, table_names
 from nginx_perf_agent.db.queries import LANGUAGES
 from nginx_perf_agent.log import configure_logging, get_logger
+from nginx_perf_agent.notify import send_text
 from nginx_perf_agent.mail import (
     ImapClient,
     ImapConfigError,
@@ -100,6 +101,9 @@ def show_config() -> None:
     typer.echo(f"slow_threshold = {settings.slow_request_threshold}s")
     typer.echo(f"internal_cidrs = {settings.internal_cidrs_file}")
     typer.echo(f"projects_file  = {settings.projects_file}")
+    typer.echo(f"weixin_target  = {settings.weixin_target}")
+    typer.echo(f"hermes_bin     = {settings.hermes_bin}")
+    typer.echo(f"hermes_timeout = {settings.hermes_timeout:g}s")
 
 
 @app.command("analyze")
@@ -125,6 +129,10 @@ def analyze(
             help="Only analyse this many hours before the newest log line; 0 = all",
         ),
     ] = 24,
+    notify: Annotated[
+        bool,
+        typer.Option("--notify", help="Push each report to Weixin via the Hermes gateway"),
+    ] = False,
 ) -> None:
     """Analyze local Nginx log files and write one Markdown report per language."""
     settings = _settings()
@@ -145,6 +153,7 @@ def analyze(
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     default_dir = settings.data_dir / "reports"
+    delivery_failures = 0
     for label in labels:
         try:
             result = analyze_paths(
@@ -160,9 +169,8 @@ def analyze(
 
         target = _report_path(output, default_dir, stamp, label, len(labels) > 1)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            render_markdown(result, top=top, label=label), encoding="utf-8"
-        )
+        text = render_markdown(result, top=top, label=label)
+        target.write_text(text, encoding="utf-8")
 
         report = result.report
         typer.echo(f"report    = {target}")
@@ -178,6 +186,19 @@ def analyze(
         if not report.timing_available:
             typer.echo("warning: logs carry no request timing; slow stats unavailable")
 
+        if notify:
+            delivery = send_text(text, settings)
+            if delivery.ok:
+                typer.echo(f"weixin    = sent to {delivery.target} ({delivery.detail})")
+            else:
+                delivery_failures += 1
+                typer.echo(
+                    f"warning: weixin delivery failed: {delivery.detail}", err=True
+                )
+
+    if delivery_failures:
+        raise typer.Exit(code=1)
+
 
 def _report_path(
     output: Path | None, default_dir: Path, stamp: str, label: str, multiple: bool
@@ -189,6 +210,28 @@ def _report_path(
     if not multiple:
         return output
     return output.with_name(f"{output.stem}-{suffix}{output.suffix}")
+
+
+@app.command("notify")
+def notify_report(
+    report: Annotated[Path, typer.Argument(help="Markdown report to send")],
+    target: Annotated[
+        str | None,
+        typer.Option("--target", "-t", help="Hermes target (default: NPA_WEIXIN_TARGET)"),
+    ] = None,
+) -> None:
+    """Send an existing report to Weixin as text through the Hermes gateway."""
+    settings = _settings()
+    if not report.is_file():
+        typer.echo(f"notify failed: no such report: {report}", err=True)
+        raise typer.Exit(code=1)
+
+    delivery = send_text(report.read_text(encoding="utf-8"), settings, target)
+    typer.echo(f"target    = {delivery.target}")
+    if not delivery.ok:
+        typer.echo(f"notify failed: {delivery.detail}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"status    = sent ({delivery.detail})")
 
 
 @app.command("projects")

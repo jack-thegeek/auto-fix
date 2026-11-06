@@ -4,7 +4,7 @@ Collects Nginx access logs from a mailbox (IMAP), analyzes performance,
 maps slow endpoints to Django source code, and produces AI-assisted
 diagnosis reports.
 
-> Status: Phase 4.1 (project registry) complete. Django source discovery
+> Status: Phase 5 (Weixin report delivery) complete. Django source discovery
 > and AI diagnosis are not implemented yet.
 
 ## Requirements
@@ -41,7 +41,7 @@ cp .env.example .env
 | `NPA_IMAP_USER` | – | Mailbox login |
 | `NPA_IMAP_PASSWORD` | – | Mailbox password or app password (masked everywhere) |
 | `NPA_IMAP_MAILBOX` | `INBOX` | Mailbox opened read-only |
-| `NPA_IMAP_SUBJECT_FILTER` | `Nginx 日志` | Subject substring; case-insensitive |
+| `NPA_IMAP_SUBJECT_FILTER` | `Nginx 日志性能分析` | Subject substring; case-insensitive |
 | `NPA_IMAP_POLL_INTERVAL` | `300` | Seconds between `watch` passes |
 | `NPA_IMAP_MAX_RETRIES` | `3` | Retries per IMAP operation before giving up |
 | `NPA_IMAP_RETRY_DELAY` | `2` | Backoff base in seconds between retries |
@@ -49,6 +49,9 @@ cp .env.example .env
 | `NPA_ENDPOINT_EXCLUSIONS` | – | Comma-separated path globs left out of endpoint stats, e.g. `/health,/static/*` |
 | `NPA_SLOW_REQUEST_THRESHOLD` | `5` | Seconds at or above which a request counts as slow |
 | `NPA_INTERNAL_CIDRS_FILE` | `internal_cidrs.txt` | One CIDR per line; requests from these networks count as internal calls |
+| `NPA_WEIXIN_TARGET` | `weixin` | Hermes delivery target; `weixin` means the home channel |
+| `NPA_HERMES_BIN` | `hermes` | Hermes executable used for delivery |
+| `NPA_HERMES_TIMEOUT` | `60` | Seconds before a delivery attempt is abandoned |
 
 Invalid values fail fast at startup.
 
@@ -63,6 +66,8 @@ uv run nginx-perf-agent mail-test  # read-only IMAP connectivity check
 uv run nginx-perf-agent process    # one polling pass
 uv run nginx-perf-agent watch      # poll every NPA_IMAP_POLL_INTERVAL seconds
 uv run nginx-perf-agent analyze data/attachments   # Markdown report of local logs
+uv run nginx-perf-agent analyze data/attachments --notify  # also push to Weixin
+uv run nginx-perf-agent notify data/reports/nginx-perf-<stamp>-en.md  # re-send a report
 uv run nginx-perf-agent projects   # validate and list registered repositories
 ```
 
@@ -103,6 +108,7 @@ src/nginx_perf_agent/
 ├── cli.py             Typer commands
 ├── config.py          Pydantic settings
 ├── log.py             structlog setup
+├── notify.py          Weixin delivery through the Hermes gateway
 ├── analysis/
 │   ├── parser.py      streaming Nginx access-log parser
 │   ├── stats.py       slow-request and endpoint statistics
@@ -243,6 +249,27 @@ projects:
   invalid.
 
 The registry is not needed by `analyze`; phases 4.2+ use it to locate source.
+
+## Weixin delivery
+
+Reports can be pushed to WeChat as text messages through the Hermes gateway.
+Hermes owns the WeChat credentials; this project stores none.
+
+```bash
+uv run nginx-perf-agent analyze data/attachments --notify
+uv run nginx-perf-agent notify data/reports/nginx-perf-20261106-120000-en.md
+uv run nginx-perf-agent notify report.md --target weixin:o9cq...@im.wechat
+```
+
+- Delivery shells out to `hermes send --to <target> --file -` and writes the
+  report body to stdin, so no shell quoting or credential handling is needed.
+- `NPA_WEIXIN_TARGET` defaults to `weixin` (the configured home channel);
+  `notify --target` overrides it for one run.
+- Long reports are not truncated here: the Weixin adapter splits them into
+  chunks of at most 2000 characters at Markdown boundaries.
+- A non-zero exit, missing `hermes` binary or timeout is reported as a
+  failure and logged; `analyze` still writes every report, then exits `1`.
+- `hermes send --list` shows the configured targets.
 
 ## Database
 

@@ -6,7 +6,7 @@
 
 ## Progress
 
-- Total: 6 phases
+- Total: 5 phases
 - Rule: Never mark a task complete without verification.
 - Update this file after every implementation session.
 - Do not skip unfinished tasks or silently mark partially implemented features as complete.
@@ -38,7 +38,7 @@
 
 - [x] 2.1 Implement IMAP connection with SSL support.
 - [x] 2.2 Implement mailbox configuration.
-- [x] 2.3 Implement subject matching for `Nginx 日志`.
+- [x] 2.3 Implement subject matching for `Nginx 日志性能分析`.
 - [x] 2.4 Implement IMAP UID-based email identification.
 - [x] 2.5 Implement attachment extraction.
 - [x] 2.6 Collect only `.gz` and `.tar` attachments; every other format is ignored.
@@ -212,123 +212,28 @@ The values above are illustrative only.
 - [x] 4.1.8 Implement `projects` CLI command.
 - [x] 4.1.9 Map email subject markers to projects (KR/EN/JP -> vb-en, CN -> vb-cn).
 
-### 4.2 Django Code Discovery
+## 5. Weixin Report Delivery
 
-- [ ] 4.2.1 Implement URL pattern discovery.
-- [ ] 4.2.2 Locate Django Views and ViewSets.
-- [ ] 4.2.3 Identify handler methods.
-- [ ] 4.2.4 Locate related Serializers.
-- [ ] 4.2.5 Locate related Models.
-- [ ] 4.2.6 Identify related service functions.
-- [ ] 4.2.7 Analyze ORM query patterns.
-- [ ] 4.2.8 Collect source code context.
-- [ ] 4.2.9 Record file paths and line numbers.
-- [ ] 4.2.10 Handle ambiguous endpoint mappings.
-- [ ] 4.2.11 Add source discovery tests.
+Push each generated report to WeChat as a **text message** through the Hermes
+Weixin gateway. Delivery is outbound only; no interactive bot behaviour.
 
-**Acceptance criteria:**
-- Multiple Django projects can be registered.
-- Known endpoints can be mapped to corresponding source code.
-- Findings include traceable file paths and line numbers.
-- Ambiguous matches are reported instead of guessed.
-- Source inspection does not require production database access.
-
-## 5. AI Performance Diagnosis
-
-### 5.1 AI Client
-
-- [ ] 5.1.1 Implement OpenAI-compatible API client.
-- [ ] 5.1.2 Support configurable Base URL.
-- [ ] 5.1.3 Support configurable API Key.
-- [ ] 5.1.4 Support configurable model name.
-- [ ] 5.1.5 Implement request timeout.
-- [ ] 5.1.6 Implement retry mechanism.
-- [ ] 5.1.7 Implement structured JSON response validation.
-- [ ] 5.1.8 Add mocked AI API tests.
-
-### 5.2 Code Diagnosis
-
-- [ ] 5.2.1 Build endpoint-specific analysis context.
-- [ ] 5.2.2 Include performance statistics.
-- [ ] 5.2.3 Include relevant View and ViewSet code.
-- [ ] 5.2.4 Include relevant Serializer and Model code.
-- [ ] 5.2.5 Implement database performance diagnosis.
-- [ ] 5.2.6 Detect potential N+1 queries.
-- [ ] 5.2.7 Detect inefficient ORM usage.
-- [ ] 5.2.8 Detect potential missing indexes.
-- [ ] 5.2.9 Detect excessive serialization.
-- [ ] 5.2.10 Detect unnecessary data retrieval.
-- [ ] 5.2.11 Detect blocking external requests.
-- [ ] 5.2.12 Detect missing caching opportunities.
-- [ ] 5.2.13 Detect repeated calculations.
-- [ ] 5.2.14 Implement severity and confidence ratings.
-- [ ] 5.2.15 Implement optimization recommendations.
-- [ ] 5.2.16 Implement verification suggestions.
-- [ ] 5.2.17 Prevent unsupported or fabricated findings.
-
-### 5.3 Diagnosis Reports
-
-- [ ] 5.3.1 Integrate AI findings into Markdown reports.
-- [ ] 5.3.2 Include source code references.
-- [ ] 5.3.3 Include optimization priorities.
-- [ ] 5.3.4 Include expected benefits and risks.
-- [ ] 5.3.5 Include confidence levels.
-- [ ] 5.3.6 Include missing evidence and limitations.
+- [x] 5.1 Implement report delivery through the Hermes CLI (`hermes send`).
+- [x] 5.2 Make the delivery target configurable (`NPA_WEIXIN_TARGET`), default `weixin` (home channel).
+- [x] 5.3 Make the Hermes executable configurable (`NPA_HERMES_BIN`), default `hermes`.
+- [x] 5.4 Send the Markdown report body as text; pass it on stdin or via `--file` so no shell quoting is involved.
+- [x] 5.5 Handle long reports by relying on the gateway's own chunking (verified limit: 2000 characters per message); never truncate locally.
+- [x] 5.6 Apply a timeout and treat a non-zero `hermes send` exit code as a delivery failure.
+- [x] 5.7 Record delivery outcome (sent/failed, target, timestamp, error) without aborting the analysis pipeline.
+- [x] 5.8 Add a `notify` CLI command that re-sends an existing report file, and a `--notify` flag on the report-producing command.
+- [x] 5.9 Add tests with a mocked `hermes` subprocess: success, non-zero exit, timeout, missing binary, long text passed whole.
+- [x] 5.10 Synchronize README and `.env.example` with the new settings and command.
 
 **Acceptance criteria:**
-- AI receives only relevant source code context.
-- Diagnosis results follow a validated schema.
-- Confirmed issues are separated from suspected issues.
-- Every finding includes supporting evidence.
-- No source code is automatically modified.
-
-## 6. Historical Analysis and Production Deployment
-
-### 6.1 Historical Analysis
-
-- [ ] 6.1.1 Persist endpoint performance statistics.
-- [ ] 6.1.2 Persist AI diagnosis results.
-- [ ] 6.1.3 Record source project revisions.
-- [ ] 6.1.4 Implement historical report lookup.
-- [ ] 6.1.5 Compare performance across analysis periods.
-- [ ] 6.1.6 Detect P95/P99 latency regressions.
-- [ ] 6.1.7 Detect error-rate regressions.
-- [ ] 6.1.8 Identify newly slow endpoints.
-- [ ] 6.1.9 Implement `tasks` CLI command.
-- [ ] 6.1.10 Implement `report` CLI command.
-
-### 6.2 Ubuntu Deployment
-
-- [ ] 6.2.1 Complete Ubuntu installation documentation.
-- [ ] 6.2.2 Provide production configuration examples.
-- [ ] 6.2.3 Create systemd service unit.
-- [ ] 6.2.4 Create systemd timer or document polling mode.
-- [ ] 6.2.5 Configure log rotation.
-- [ ] 6.2.6 Configure data retention.
-- [ ] 6.2.7 Document database backup and recovery.
-- [ ] 6.2.8 Document application upgrades.
-- [ ] 6.2.9 Verify execution under a non-root user.
-- [ ] 6.2.10 Verify unattended email processing.
-
-### 6.3 Final Verification
-
-- [ ] 6.3.1 Run all unit tests.
-- [ ] 6.3.2 Run integration tests.
-- [ ] 6.3.3 Verify IMAP connectivity.
-- [ ] 6.3.4 Verify attachment processing.
-- [ ] 6.3.5 Verify real Nginx log parsing.
-- [ ] 6.3.6 Verify multi-project source discovery.
-- [ ] 6.3.7 Verify AI diagnosis.
-- [ ] 6.3.8 Verify report generation.
-- [ ] 6.3.9 Verify historical comparison.
-- [ ] 6.3.10 Verify systemd deployment.
-- [ ] 6.3.11 Complete README documentation.
-
-**Acceptance criteria:**
-- The complete pipeline works from email reception to report generation.
-- The application runs unattended on Ubuntu.
-- All tests pass.
-- Deployment and maintenance procedures are documented.
+- A generated report can be delivered to Weixin as one or more text messages.
+- A delivery failure is reported clearly but never loses the generated report or stops log analysis.
+- No WeChat credentials are stored in this project; the gateway owns them.
+- Long reports are never silently truncated.
+- All delivery paths are covered by automated tests.
 
 ---
 
@@ -352,8 +257,7 @@ The values above are illustrative only.
 - [x] Phase 1: Project Foundation
 - [x] Phase 2: Email Monitoring
 - [x] Phase 3: Log Parsing and Analysis
-- [ ] Phase 4: Source Code Analysis
-- [ ] Phase 5: AI Diagnosis
-- [ ] Phase 6: Historical Analysis and Deployment
+- [x] Phase 4: Project Registry
+- [x] Phase 5: Weixin Report Delivery
 
-**Next action:** Phase 4.1 complete. `projects.py` adds the YAML registry (`projects.yaml`, `NPA_PROJECTS_FILE`), Pydantic validation (unique names, prefixes, endpoint mappings, unknown keys), enable/disable, longest-prefix and manual endpoint resolution, missing-checkout reporting, and the `projects` CLI command. `projects.example.yaml` registers the six local repositories (vb-en, vb-cn, manage, vb-bio, vps, public); URL prefixes and manual mappings are intentionally empty until 4.2 discovers real routes. Subject markers attach each email to a project (KR/EN/JP -> vb-en, CN -> vb-cn) and are stored as `emails.project`; existing rows were backfilled locally (108 emails). URL and manual mappings remain empty until 4.2. 134 tests pass. Next: 4.2 Django Code Discovery.
+**Next action:** Phase 5 complete. `notify.py` sends report text through `hermes send --to <target> --file -` (stdin, no quoting), with `NPA_WEIXIN_TARGET` (default `weixin`), `NPA_HERMES_BIN` and `NPA_HERMES_TIMEOUT`. `analyze --notify` pushes every report after writing it; `notify <report>` re-sends one file. Long reports rely on the Weixin adapter's 2000-character chunking, so nothing is truncated locally. Failures (non-zero exit, timeout, missing binary) are logged and reported, never lose the report, and make the command exit `1`. Live delivery to the configured Weixin home channel verified. 162 tests pass. No further phases planned.

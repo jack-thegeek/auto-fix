@@ -68,6 +68,7 @@ def _mail_env(monkeypatch, tmp_path):
     monkeypatch.setenv("NPA_IMAP_PASSWORD", "s3cret")
     monkeypatch.setenv("NPA_IMAP_RETRY_DELAY", "0")
     monkeypatch.setenv("NPA_IMAP_MAILBOX", "INBOX")
+    monkeypatch.setenv("NPA_IMAP_SUBJECT_FILTER", "Nginx 日志")
     monkeypatch.setenv("NPA_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("NPA_DATABASE_URL", f"sqlite:///{tmp_path / 'cli.db'}")
     # Keep mail tests independent of the developer's local registry.

@@ -24,6 +24,7 @@ def make_settings(tmp_path, **overrides):
         imap_user="monitor@example.com",
         imap_password="s3cret",
         imap_mailbox="INBOX",
+        imap_subject_filter="Nginx 日志",
         imap_max_retries=1,
         imap_retry_delay=0,
         data_dir=tmp_path / "data",
