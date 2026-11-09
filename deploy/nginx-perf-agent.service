@@ -1,14 +1,20 @@
 [Unit]
-Description=Nginx performance agent (pull mail, report, push to Weixin)
+Description=Nginx performance agent (IMAP IDLE + Weixin reports)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
-Type=oneshot
+Type=simple
 WorkingDirectory=%h/workplace/auto-fix
 Environment=PYTHONUNBUFFERED=1
 # hermes lives in ~/.local/bin, which is not on the default service PATH.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/workplace/auto-fix/.venv/bin/nginx-perf-agent fetch-report
+ExecStart=%h/workplace/auto-fix/.venv/bin/nginx-perf-agent watch --idle --notify
+Restart=always
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
+
+[Install]
+WantedBy=default.target

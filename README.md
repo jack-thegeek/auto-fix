@@ -161,7 +161,7 @@ src/nginx_perf_agent/
     ├── queries.py     attachment sha256 -> site marker (EN/KR/JP/CN)
     └── session.py     engine, init_db, session factory
 tests/                 pytest suite (fake IMAP server in `fake_imap.py`)
-deploy/                systemd user unit and timer for scheduled `fetch-report`
+deploy/                systemd user unit for `watch --idle --notify`
 ```
 
 ## Log parsing
@@ -290,31 +290,31 @@ projects:
 
 The registry is not needed by `analyze`; phases 4.2+ use it to locate source.
 
-## Scheduled runs
+## Run as a service
 
-The log emails arrive daily at 08:15-08:45 and 20:15-20:45. The timer runs
-`fetch-report` at 09:00 and 21:00, 15 minutes after each batch: one pull of
-new mail, one report per site for the last 12 hours, pushed to Weixin.
+`deploy/nginx-perf-agent.service` runs `watch --idle --notify`: the IMAP
+server pushes as soon as mail arrives, so the pass starts within seconds,
+and the report for each newly stored log is pushed to Weixin. The service
+restarts automatically after a failure.
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/nginx-perf-agent.service deploy/nginx-perf-agent.timer ~/.config/systemd/user/
+cp deploy/nginx-perf-agent.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now nginx-perf-agent.timer
+systemctl --user enable --now nginx-perf-agent
 loginctl enable-linger $USER   # run at boot without logging in
 ```
 
-- The 12-hour windows line up: the 09:00 run covers the morning mail, the
-  21:00 run covers the evening mail.
 - The unit assumes the checkout is at `~/workplace/auto-fix`; adjust
   `WorkingDirectory` and `ExecStart` if it lives elsewhere.
 - `PATH` includes `~/.local/bin` because `hermes` is installed there.
-- Check the schedule with `systemctl --user list-timers nginx-perf-agent.timer`;
-  logs go to the journal: `journalctl --user -u nginx-perf-agent -f`.
-- Run it immediately with `systemctl --user start nginx-perf-agent.service`.
-- Stop it with `systemctl --user disable --now nginx-perf-agent.timer`.
-- `Persistent=true` runs a missed pass after boot, so downtime does not skip
-  a report.
+- Logs go to the journal: `journalctl --user -u nginx-perf-agent -f`.
+- Stop it with `systemctl --user disable --now nginx-perf-agent`.
+- Each email is its own IDLE event: when a batch arrives one email at a time,
+  each pass pushes the report for the site it just stored. For one aggregate
+  push per batch, run `fetch-report` manually or on a timer instead.
+- `npa-fetch` is the manual equivalent: one pull, then one report per site
+  for the last 12 hours.
 
 ## Weixin delivery
 
