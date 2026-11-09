@@ -41,6 +41,10 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# `fetch-report` window: hours of log time before the newest stored line.
+# One email covers 12 hours, so 12h/24h mean the newest 1/2 emails per site.
+REPORT_HOURS = 12.0
+
 
 def _settings() -> Settings:
     try:
@@ -166,6 +170,7 @@ def _analyze_files(
     threshold: float,
     hours: float,
     notify: bool,
+    sites: tuple[str, ...] | None = None,
 ) -> int:
     """Write one report per site, optionally push. Returns delivery failures."""
     networks = load_internal_networks(settings.internal_cidrs_file)
@@ -175,6 +180,8 @@ def _analyze_files(
     # EN, KR, JP, CN first; files with no email attribution last.
     labels = [label for label in LANGUAGES if label in groups]
     labels += [label for label in groups if label not in LANGUAGES]
+    if sites is not None:
+        labels = [label for label in labels if label in sites]
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     default_dir = settings.data_dir / "reports"
@@ -369,6 +376,47 @@ def process_emails(
         engine.dispose()
     typer.echo(result.summary())
     failures = _report_new_mail(result, settings) if notify else 0
+    if result.failed or failures:
+        raise typer.Exit(code=1)
+
+
+@app.command("fetch-report")
+def fetch_report() -> None:
+    """Pull mail once, then push one report per site for the last 12 hours."""
+    settings = _settings()
+    _require_imap(settings)
+    engine, processor = _open_processor(settings)
+    try:
+        result = processor.process_once()
+    except (ImapError, OSError) as exc:
+        typer.echo(f"processing failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    finally:
+        engine.dispose()
+    typer.echo(result.summary())
+    typer.echo(f"new logs  = {len(result.stored)}")
+
+    try:
+        files = resolve_log_files([settings.attachments_dir])
+    except FileNotFoundError:
+        typer.echo("no stored logs to analyze")
+        if result.failed:
+            raise typer.Exit(code=1)
+        return
+    try:
+        failures = _analyze_files(
+            files,
+            settings,
+            output=None,
+            top=10,
+            threshold=settings.slow_request_threshold,
+            hours=REPORT_HOURS,
+            notify=True,
+            sites=LANGUAGES,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"report failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     if result.failed or failures:
         raise typer.Exit(code=1)
 

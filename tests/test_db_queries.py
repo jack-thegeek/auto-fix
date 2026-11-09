@@ -12,7 +12,7 @@ from nginx_perf_agent.db.queries import language_from_subject
 
 def test_language_from_subject_reads_standalone_marker():
     assert language_from_subject("[告警][低] EN Nginx 日志安全分析报告") == "EN"
-    assert language_from_subject("KR Nginx 日志性能分析报告") == "KR"
+    assert language_from_subject("KR Nginx性能汇总报告") == "KR"
     assert language_from_subject("ENVIRONMENT Nginx 日志") is None
     assert language_from_subject("EN KR Nginx 日志") is None
     assert language_from_subject(None) is None

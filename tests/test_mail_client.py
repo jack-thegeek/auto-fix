@@ -51,9 +51,9 @@ def test_connects_with_ssl_and_opens_mailbox_read_only():
 
 
 def test_mailbox_name_with_space_is_quoted():
-    client = ImapClient(settings(imap_mailbox="Log Monitor"))
+    client = ImapClient(settings(imap_mailbox="Log Perf"))
     client.connect()
-    assert FakeImap.instances[-1].selected == [('"Log Monitor"', True)]
+    assert FakeImap.instances[-1].selected == [('"Log Perf"', True)]
     client.close()
 
 
@@ -94,8 +94,8 @@ def test_password_is_not_in_settings_repr():
         ("Weekly report", "Nginx 日志", False),
         ("", "Nginx 日志", False),
         ("anything", "  ", True),
-        ("JP Nginx 日志性能分析报告 2026-11-05", "Nginx 日志性能分析", True),
-        ("[告警][高] EN Nginx 日志安全分析报告", "Nginx 日志性能分析", False),
+        ("JP Nginx性能汇总报告 2026-11-05", "Nginx性能汇总", True),
+        ("[告警][高] EN Nginx 日志安全分析报告", "Nginx性能汇总", False),
     ],
 )
 def test_subject_matching(subject, needle, expected):

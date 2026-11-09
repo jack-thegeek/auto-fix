@@ -29,7 +29,7 @@ def test_version():
 def test_help_lists_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for command in ("version", "config", "init-db", "analyze", "projects"):
+    for command in ("version", "config", "init-db", "analyze", "projects", "fetch-report"):
         assert command in result.stdout
 
 
@@ -135,6 +135,99 @@ def test_process_requires_imap_configuration(monkeypatch, tmp_path):
     result = runner.invoke(app, ["process"])
     assert result.exit_code == 2
     assert "IMAP is not configured" in result.stderr
+
+
+def _slow_log(*hours: int) -> bytes:
+    return "".join(
+        f'1.2.3.4 - - [06/Nov/2026:{hour:02d}:00:00 +0800] "GET /api/x/ HTTP/1.1" '
+        '200 10 9.0 "-" "ua"\n'
+        for hour in hours
+    ).encode()
+
+
+def test_fetch_report_pulls_then_pushes_one_report_per_site(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    FakeImap.add(
+        1,
+        make_email(
+            subject="Nginx 日志 EN",
+            attachments=(("en.log.gz", gzip.compress(_slow_log(10))),),
+        ),
+    )
+    FakeImap.add(
+        2,
+        make_email(
+            subject="Nginx 日志 CN",
+            attachments=(("cn.log.gz", gzip.compress(_slow_log(11))),),
+        ),
+    )
+
+    result = runner.invoke(app, ["fetch-report"])
+
+    assert result.exit_code == 0, result.output
+    assert "processed=2" in result.stdout
+    assert "window    = last 12h" in result.stdout
+    assert [text.splitlines()[0] for text in sent] == [
+        "# 慢请求统计（EN）",
+        "# 慢请求统计（CN）",
+    ]
+    assert len(list((tmp_path / "data" / "reports").glob("*.md"))) == 2
+
+
+def test_fetch_report_uses_the_last_12_hours_of_log_time(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    FakeImap.add(
+        1,
+        make_email(
+            subject="Nginx 日志 EN",
+            attachments=(("en.log.gz", gzip.compress(_slow_log(0, 13))),),
+        ),
+    )
+
+    result = runner.invoke(app, ["fetch-report"])
+
+    assert result.exit_code == 0, result.output
+    assert "慢请求/总请求占比：1/1（100.0%）" in sent[0]
+
+
+def test_fetch_report_reports_existing_logs_without_new_mail(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    FakeImap.add(
+        1,
+        make_email(
+            subject="Nginx 日志 EN",
+            attachments=(("en.log.gz", gzip.compress(_slow_log(10))),),
+        ),
+    )
+    assert runner.invoke(app, ["process"]).exit_code == 0
+    sent.clear()
+
+    result = runner.invoke(app, ["fetch-report"])
+
+    assert result.exit_code == 0, result.output
+    assert "scanned=0" in result.stdout
+    assert len(sent) == 1
+
+
+def test_fetch_report_skips_files_without_a_site_marker(monkeypatch, tmp_path):
+    install(monkeypatch)
+    sent = []
+    _notify_env(monkeypatch, tmp_path, sent)
+    FakeImap.add(
+        1,
+        make_email(attachments=(("other.log.gz", gzip.compress(_slow_log(10))),)),
+    )
+
+    result = runner.invoke(app, ["fetch-report"])
+
+    assert result.exit_code == 0, result.output
+    assert sent == []
 
 
 def test_watch_polls_until_interrupted(monkeypatch, tmp_path):

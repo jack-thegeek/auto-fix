@@ -1,4 +1,10 @@
-"""Archive attachment extraction and content-addressed storage."""
+"""Archive attachment extraction and content-addressed storage.
+
+Each matching email carries the previous 12 hours of Nginx logs, split into
+six 2-hour chunks: `<site>_2h_<stamp>.log` and `<site>_2h_<stamp>-proxy.log`.
+For a window of N hours, use the newest ceil(N / HOURS_PER_EMAIL) emails per
+site (12h -> 1, 24h -> 2, 48h -> 4).
+"""
 
 from __future__ import annotations
 
@@ -19,6 +25,9 @@ log = get_logger(__name__)
 # Collected archive attachments; anything else is ignored.
 ARCHIVE_SUFFIXES = frozenset({".gz", ".tar"})
 LOG_SUFFIXES = frozenset({".log", ".txt"})
+# Coverage of one email, used to pick attachments for a time window.
+HOURS_PER_EMAIL = 12
+CHUNK_HOURS = 2
 MAX_DEPTH = 2
 CHUNK = 1024 * 1024
 

@@ -4,6 +4,10 @@ Collects Nginx access logs from a mailbox (IMAP), analyzes performance,
 maps slow endpoints to Django source code, and produces AI-assisted
 diagnosis reports.
 
+> Each matching email carries the previous **12 hours** of Nginx logs.
+> For a "last N hours" request, read
+> [Log coverage per email](#log-coverage-per-email) first.
+
 > Status: Phase 5 (Weixin report delivery) complete. Django source discovery
 > and AI diagnosis are not implemented yet.
 
@@ -41,7 +45,7 @@ cp .env.example .env
 | `NPA_IMAP_USER` | – | Mailbox login |
 | `NPA_IMAP_PASSWORD` | – | Mailbox password or app password (masked everywhere) |
 | `NPA_IMAP_MAILBOX` | `INBOX` | Mailbox opened read-only |
-| `NPA_IMAP_SUBJECT_FILTER` | `Nginx 日志性能分析` | Subject substring; case-insensitive |
+| `NPA_IMAP_SUBJECT_FILTER` | `Nginx性能汇总` | Subject substring; case-insensitive |
 | `NPA_IMAP_POLL_INTERVAL` | `300` | Seconds between `watch` passes |
 | `NPA_IMAP_MAX_RETRIES` | `3` | Retries per IMAP operation before giving up |
 | `NPA_IMAP_RETRY_DELAY` | `2` | Backoff base in seconds between retries |
@@ -64,6 +68,7 @@ uv run nginx-perf-agent config     # validate and show effective settings
 uv run nginx-perf-agent init-db    # create database and tables
 uv run nginx-perf-agent mail-test  # read-only IMAP connectivity check
 uv run nginx-perf-agent process    # one polling pass
+uv run nginx-perf-agent fetch-report  # pull once, report the last 12h per site, push
 uv run nginx-perf-agent watch      # poll every NPA_IMAP_POLL_INTERVAL seconds
 uv run nginx-perf-agent watch --idle  # wait for server push, poll as fallback
 uv run nginx-perf-agent watch --notify  # poll, then report and push new logs
@@ -109,6 +114,29 @@ never deleted, moved or marked as read.
   seconds. The wait expires after `NPA_IMAP_POLL_INTERVAL` (capped at 29 min)
   and a normal scan still runs as a fallback. The server must advertise
   `IDLE`; otherwise `watch --idle` exits `2` and says to drop the flag.
+- `fetch-report` runs one pass, then analyses every stored log in the last 12
+  hours of log time (ending at the newest stored line) and pushes one report
+  per site: EN, KR, JP and CN are delivered separately. Logs with no site
+  marker are skipped. It reports existing logs even when no new mail arrived.
+
+## Log coverage per email
+
+Every matching email carries the previous **12 hours** of Nginx logs, split
+into six 2-hour chunks. Each chunk has two files:
+
+- `<site>_2h_<YYYYMMDD>_<HHMMSS>.log` — access log
+- `<site>_2h_<YYYYMMDD>_<HHMMSS>-proxy.log` — universal-service detail
+
+`*-proxy.log` files are skipped in directory scans for now: they repeat the
+universal-service calls already present in the access log and would skew
+endpoint statistics. Explicitly naming a proxy file still analyses it.
+
+So a window of `N` hours means the newest `ceil(N / 12)` emails **per site**
+(`12h` → 1 email, `24h` → 2, `48h` → 4). Each site (CN/KR/EN/JP) arrives as
+its own email; choose them by `emails.received_at`, and resolve files through
+the `attachments` table rather than guessing from hashed paths. The log
+timestamps inside the files stay authoritative when filtering lines, because
+the 12-hour coverage ends at send time, not at a round clock hour.
 
 ## Project layout
 
@@ -133,7 +161,7 @@ src/nginx_perf_agent/
     ├── queries.py     attachment sha256 -> site marker (EN/KR/JP/CN)
     └── session.py     engine, init_db, session factory
 tests/                 pytest suite (fake IMAP server in `fake_imap.py`)
-deploy/                systemd user unit for `watch --idle --notify`
+deploy/                systemd user unit and timer for scheduled `fetch-report`
 ```
 
 ## Log parsing
@@ -262,26 +290,31 @@ projects:
 
 The registry is not needed by `analyze`; phases 4.2+ use it to locate source.
 
-## Run as a service
+## Scheduled runs
 
-`deploy/nginx-perf-agent.service` runs `watch --idle --notify` as a systemd
-user service, so it keeps running after logout and restarts on failure.
+The log emails arrive daily at 08:15-08:45 and 20:15-20:45. The timer runs
+`fetch-report` at 09:00 and 21:00, 15 minutes after each batch: one pull of
+new mail, one report per site for the last 12 hours, pushed to Weixin.
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/nginx-perf-agent.service ~/.config/systemd/user/
+cp deploy/nginx-perf-agent.service deploy/nginx-perf-agent.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now nginx-perf-agent
-loginctl enable-linger $USER   # start at boot without logging in
+systemctl --user enable --now nginx-perf-agent.timer
+loginctl enable-linger $USER   # run at boot without logging in
 ```
 
+- The 12-hour windows line up: the 09:00 run covers the morning mail, the
+  21:00 run covers the evening mail.
 - The unit assumes the checkout is at `~/workplace/auto-fix`; adjust
   `WorkingDirectory` and `ExecStart` if it lives elsewhere.
 - `PATH` includes `~/.local/bin` because `hermes` is installed there.
-- Logs go to the journal: `journalctl --user -u nginx-perf-agent -f`.
-- Stop it with `systemctl --user disable --now nginx-perf-agent`.
-- `Restart=always` with a 10 second delay; a broken `.env` shows up as a
-  restart loop in the journal.
+- Check the schedule with `systemctl --user list-timers nginx-perf-agent.timer`;
+  logs go to the journal: `journalctl --user -u nginx-perf-agent -f`.
+- Run it immediately with `systemctl --user start nginx-perf-agent.service`.
+- Stop it with `systemctl --user disable --now nginx-perf-agent.timer`.
+- `Persistent=true` runs a missed pass after boot, so downtime does not skip
+  a report.
 
 ## Weixin delivery
 

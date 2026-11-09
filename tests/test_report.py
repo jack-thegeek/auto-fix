@@ -164,6 +164,7 @@ def test_analyze_keeps_only_the_last_24_hours(tmp_path):
 def test_analyze_expands_directories(tmp_path):
     write_log(tmp_path, [line("/a", "0.1")], name="one.log")
     write_log(tmp_path, [line("/b", "6.0")], name="two.log")
+    write_log(tmp_path, [line("/p", "6.0")], name="one-proxy.log")
     (tmp_path / "notes.txt").write_text("ignored", encoding="utf-8")
 
     result = analyze_paths([tmp_path])

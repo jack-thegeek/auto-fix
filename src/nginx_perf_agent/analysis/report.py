@@ -20,6 +20,9 @@ from nginx_perf_agent.analysis.stats import (
 UNKNOWN = "n/a"
 DEFAULT_WINDOW_HOURS = 24.0
 UNCLASSIFIED = "未分类"
+# proxy.log is universal-service's detailed log and repeats those calls;
+# skip it in directory scans until it gets a dedicated report.
+PROXY_LOG_SUFFIX = "-proxy.log"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -42,12 +45,22 @@ class AnalysisResult:
 
 
 def resolve_log_files(paths: Iterable[str | Path]) -> list[Path]:
-    """Expand directories to their `.log` files; explicit files are kept as given."""
+    """Expand directories to their `.log` files; explicit files are kept as given.
+
+    Directory scans skip `*-proxy.log` (universal-service detail, ignored for
+    now); naming an explicit proxy file still analyses it.
+    """
     files: list[Path] = []
     for raw in paths:
         path = Path(raw)
         if path.is_dir():
-            files.extend(sorted(item for item in path.rglob("*.log") if item.is_file()))
+            files.extend(
+                sorted(
+                    item
+                    for item in path.rglob("*.log")
+                    if item.is_file() and not item.name.endswith(PROXY_LOG_SUFFIX)
+                )
+            )
         elif path.is_file():
             files.append(path)
         else:

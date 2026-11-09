@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     imap_user: str | None = None
     imap_password: SecretStr | None = None
     imap_mailbox: str = "INBOX"
-    imap_subject_filter: str = "Nginx 日志性能分析"
+    imap_subject_filter: str = "Nginx性能汇总"
     imap_poll_interval: int = Field(default=300, ge=5)
     imap_max_retries: int = Field(default=3, ge=1, le=10)
     imap_retry_delay: float = Field(default=2.0, ge=0)

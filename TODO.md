@@ -39,7 +39,7 @@
 
 - [x] 2.1 Implement IMAP connection with SSL support.
 - [x] 2.2 Implement mailbox configuration.
-- [x] 2.3 Implement subject matching for `Nginx 日志性能分析`.
+- [x] 2.3 Implement subject matching for `Nginx性能汇总`.
 - [x] 2.4 Implement IMAP UID-based email identification.
 - [x] 2.5 Implement attachment extraction.
 - [x] 2.6 Collect only `.gz` and `.tar` attachments; every other format is ignored.
@@ -244,6 +244,7 @@ Weixin gateway. Delivery is outbound only; no interactive bot behaviour.
 - [x] 6.1 Ship a systemd user unit in `deploy/nginx-perf-agent.service`.
 - [x] 6.2 Document install, enable, linger and journal commands in README.
 - [x] 6.3 Verify the unit starts `watch --idle --notify`, processes mail and pushes.
+- [x] 6.4 Add `fetch-report`: one mail pass, then a 12h log-time report per site (EN/KR/JP/CN) pushed separately.
 
 ---
 
@@ -271,4 +272,4 @@ Weixin gateway. Delivery is outbound only; no interactive bot behaviour.
 - [x] Phase 5: Weixin Report Delivery
 - [x] Phase 6: Long-Running Deployment
 
-**Next action:** all phases complete. `watch --idle --notify` waits on IMAP IDLE, scans immediately on start and every `NPA_IMAP_POLL_INTERVAL` (max 29 min) as fallback, regenerates reports only when a pass stored a new log file, and pushes them through Hermes. The systemd user unit in `deploy/` is installed, enabled and running; live delivery verified. 169 tests pass.
+**Next action:** all phases complete. `watch --idle --notify` waits on IMAP IDLE, scans immediately on start and every `NPA_IMAP_POLL_INTERVAL` (max 29 min) as fallback, regenerates reports only when a pass stored a new log file, and pushes them through Hermes. The systemd user unit in `deploy/` is installed, enabled and running; live delivery verified. 173 tests pass.
